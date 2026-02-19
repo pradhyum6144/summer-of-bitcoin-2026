@@ -17,4 +17,16 @@ for gz in fixtures/blocks/*.dat.gz; do
   fi
 done
 
+# Install Rust if not available
+if ! command -v cargo &>/dev/null; then
+  echo "Installing Rust..."
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+  # shellcheck disable=SC1091
+  source "$HOME/.cargo/env"
+fi
+
+# Pre-build CLI binary (avoids hitting the per-test 60-second timeout during cargo build)
+echo "Building CLI binary..."
+cargo build --release --bin cli
+
 echo "Setup complete"

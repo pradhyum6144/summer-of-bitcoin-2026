@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitcoin Transaction Visualizer - Chain Lens</title>
+    <!-- No external dependencies: flow diagram is rendered with inline SVG -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .input-section {
+            margin-bottom: 30px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        textarea, input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        textarea:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .result {
+            margin-top: 40px;
+            display: none;
+        }
+
+        .result.show {
+            display: block;
+        }
+
+        .story-section {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 25px;
+        }
+
+        .story-section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.8em;
+        }
+
+        .story-section h3 {
+            color: #764ba2;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-size: 1.3em;
+        }
+
+        .story-section p {
+            line-height: 1.8;
+            color: #555;
+            margin-bottom: 12px;
+        }
+
+        .flow-diagram {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin: 30px 0;
+            padding: 20px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .flow-column {
+            flex: 1;
+        }
+
+        .flow-arrow {
+            font-size: 3em;
+            color: #667eea;
+            margin: 0 20px;
+        }
+
+        .flow-item {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-weight: 600;
+        }
+
+        .flow-item.fee {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .flow-item small {
+            display: block;
+            opacity: 0.9;
+            margin-top: 5px;
+            font-weight: normal;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .info-card {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 20px;
+            transition: border-color 0.3s;
+        }
+
+        .info-card:hover {
+            border-color: #667eea;
+        }
+
+        .info-card h4 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .info-card p {
+            color: #333;
+            font-size: 1.3em;
+            font-weight: 600;
+        }
+
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 8px;
+        }
+
+        .warning h4 {
+            color: #856404;
+            margin-bottom: 8px;
+        }
+
+        .warning ul {
+            margin-left: 20px;
+            color: #856404;
+        }
+
+        .technical-details {
+            margin-top: 20px;
+        }
+
+        .toggle-technical {
+            color: #667eea;
+            cursor: pointer;
+            text-decoration: underline;
+            display: inline-block;
+            margin-bottom: 15px;
+        }
+
+        .technical-content {
+            display: none;
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            overflow-x: auto;
+        }
+
+        .technical-content.show {
+            display: block;
+        }
+
+        .tooltip {
+            position: relative;
+            border-bottom: 1px dotted #667eea;
+            cursor: help;
+        }
+
+        .tooltip:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            white-space: nowrap;
+            font-size: 12px;
+            z-index: 1000;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin: 4px;
+        }
+
+        .badge.segwit {
+            background: #28a745;
+            color: white;
+        }
+
+        .badge.legacy {
+            background: #6c757d;
+            color: white;
+        }
+
+        .badge.rbf {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .error {
+            background: #f8d7da;
+            border-left: 4px solid #dc3545;
+            padding: 15px;
+            border-radius: 8px;
+            color: #721c24;
+        }
+
+        .mode-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            justify-content: center;
+        }
+
+        .mode-btn {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+            padding: 12px 28px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .mode-btn:hover {
+            background: #f0f0ff;
+        }
+
+        .mode-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: transparent;
+        }
+
+        .file-upload-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 15px;
+        }
+
+        .file-upload-item {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px dashed #e0e0e0;
+            transition: border-color 0.3s;
+        }
+
+        .file-upload-item:hover {
+            border-color: #667eea;
+        }
+
+        .file-label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .file-name {
+            display: block;
+            margin-top: 8px;
+            font-size: 12px;
+            color: #28a745;
+            font-weight: 500;
+        }
+
+        .block-overview {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+        }
+
+        .block-overview h2 {
+            margin-bottom: 20px;
+            font-size: 2em;
+        }
+
+        .block-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .block-stat {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 15px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+        }
+
+        .block-stat h4 {
+            font-size: 0.9em;
+            opacity: 0.9;
+            margin-bottom: 8px;
+        }
+
+        .block-stat p {
+            font-size: 1.5em;
+            font-weight: 700;
+        }
+
+        .tx-list {
+            margin-top: 30px;
+        }
+
+        .tx-item {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            overflow: hidden;
+            transition: border-color 0.3s;
+        }
+
+        .tx-item:hover {
+            border-color: #667eea;
+        }
+
+        .tx-header {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+        }
+
+        .tx-header:hover {
+            background: #e9ecef;
+        }
+
+        .tx-expand-icon {
+            font-size: 1.2em;
+            transition: transform 0.3s;
+        }
+
+        .tx-expand-icon.expanded {
+            transform: rotate(90deg);
+        }
+
+        .tx-details {
+            display: none;
+            padding: 20px;
+        }
+
+        .tx-details.show {
+            display: block;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #667eea;
+            font-size: 1.2em;
+        }
+
+        .loading:after {
+            content: '...';
+            animation: dots 1.5s infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Chain Lens</h1>
+            <p>Understand Bitcoin transactions visually</p>
+        </div>
+
+        <div class="content">
+            <!-- Mode Selector -->
+            <div class="mode-selector">
+                <button class="mode-btn active" onclick="switchMode('transaction')">Transaction Mode</button>
+                <button class="mode-btn" onclick="switchMode('block')">Block Mode</button>
+            </div>
+
+            <!-- Transaction Mode -->
+            <div id="transactionMode" class="mode-content">
+                <div class="input-section">
+                    <label for="fixtureInput">
+                        Paste your transaction fixture JSON:
+                        <span class="tooltip" data-tooltip="JSON containing raw_tx hex, prevouts array, and network">ℹ️</span>
+                    </label>
+                    <textarea id="fixtureInput" placeholder='{"network": "mainnet", "raw_tx": "0200...", "prevouts": [...]}'></textarea>
+                </div>
+                <button onclick="analyzeTransaction()">Analyze Transaction</button>
+            </div>
+
+            <!-- Block Mode -->
+            <div id="blockMode" class="mode-content" style="display: none;">
+                <div class="input-section">
+                    <label>Upload Block Files:</label>
+                    <div class="file-upload-grid">
+                        <div class="file-upload-item">
+                            <label for="blkFile" class="file-label">
+                                blk*.dat
+                                <span class="tooltip" data-tooltip="Bitcoin block data file">ℹ️</span>
+                            </label>
+                            <input type="file" id="blkFile" accept=".dat" onchange="handleFileSelect(event, 'blk')">
+                            <span id="blkFileName" class="file-name"></span>
+                        </div>
+                        <div class="file-upload-item">
+                            <label for="revFile" class="file-label">
+                                rev*.dat
+                                <span class="tooltip" data-tooltip="Undo/revert data file containing prevouts">ℹ️</span>
+                            </label>
+                            <input type="file" id="revFile" accept=".dat" onchange="handleFileSelect(event, 'rev')">
+                            <span id="revFileName" class="file-name"></span>
+                        </div>
+                        <div class="file-upload-item">
+                            <label for="xorFile" class="file-label">
+                                xor.dat
+                                <span class="tooltip" data-tooltip="XOR obfuscation key (8 bytes)">ℹ️</span>
+                            </label>
+                            <input type="file" id="xorFile" accept=".dat" onchange="handleFileSelect(event, 'xor')">
+                            <span id="xorFileName" class="file-name"></span>
+                        </div>
+                    </div>
+                </div>
+                <button onclick="analyzeBlock()">Analyze Block</button>
+            </div>
+
+            <div id="result" class="result"></div>
+        </div>
+    </div>
+
+    <script>
+        let uploadedFiles = {
+            blk: null,
+            rev: null,
+            xor: null
+        };
+
+        function switchMode(mode) {
+            const transactionMode = document.getElementById('transactionMode');
+            const blockMode = document.getElementById('blockMode');
+            const buttons = document.querySelectorAll('.mode-btn');
+
+            buttons.forEach(btn => btn.classList.remove('active'));
+
+            if (mode === 'transaction') {
+                transactionMode.style.display = 'block';
+                blockMode.style.display = 'none';
+                buttons[0].classList.add('active');
+            } else {
+                transactionMode.style.display = 'none';
+                blockMode.style.display = 'block';
+                buttons[1].classList.add('active');
+            }
+
+            // Clear results
+            document.getElementById('result').innerHTML = '';
+            document.getElementById('result').classList.remove('show');
+        }
+
+        function handleFileSelect(event, type) {
+            const file = event.target.files[0];
+            if (file) {
+                uploadedFiles[type] = file;
+                document.getElementById(`${type}FileName`).textContent = `✓ ${file.name}`;
+            }
+        }
+
+        async function analyzeBlock() {
+            const resultDiv = document.getElementById('result');
+
+            if (!uploadedFiles.blk || !uploadedFiles.rev || !uploadedFiles.xor) {
+                resultDiv.innerHTML = '<div class="error">Please upload all three required files (blk*.dat, rev*.dat, xor.dat)</div>';
+                resultDiv.classList.add('show');
+                return;
+            }
+
+            resultDiv.innerHTML = '<div class="loading">Analyzing block</div>';
+            resultDiv.classList.add('show');
+
+            try {
+                const formData = new FormData();
+                formData.append('blk', uploadedFiles.blk);
+                formData.append('rev', uploadedFiles.rev);
+                formData.append('xor', uploadedFiles.xor);
+
+                const response = await fetch('/api/analyze-block', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const blocks = await response.json();
+
+                if (Array.isArray(blocks) && blocks.length > 0) {
+                    renderBlockResults(blocks);
+                } else {
+                    resultDiv.innerHTML = '<div class="error">No blocks found or parsing failed</div>';
+                }
+            } catch (e) {
+                resultDiv.innerHTML = `<div class="error"><strong>Error:</strong> ${e.message}</div>`;
+            }
+        }
+
+        function renderBlockResults(blocks) {
+            const resultDiv = document.getElementById('result');
+            let html = '';
+
+            blocks.forEach((block, idx) => {
+                if (!block.ok || !block.block_header) {
+                    html += `<div class="error">Block ${idx + 1} parsing failed: ${block.error?.message || 'Unknown error'}</div>`;
+                    return;
+                }
+
+                const header = block.block_header;
+                const stats = block.block_stats;
+                const txCount = block.tx_count || 0;
+
+                html += `
+                    <div class="block-overview">
+                        <h2>Block ${header.block_hash.substring(0, 16)}...</h2>
+                        <div class="block-stats-grid">
+                            <div class="block-stat">
+                                <h4>Block Hash</h4>
+                                <p style="font-size: 0.9em; word-break: break-all;">${header.block_hash}</p>
+                            </div>
+                            <div class="block-stat">
+                                <h4>Transactions</h4>
+                                <p>${txCount}</p>
+                            </div>
+                            <div class="block-stat">
+                                <h4>Total Fees</h4>
+                                <p>${(stats.total_fees_sats / 100000000).toFixed(8)} BTC</p>
+                            </div>
+                            <div class="block-stat">
+                                <h4>Avg Fee Rate</h4>
+                                <p>${stats.avg_fee_rate_sat_vb.toFixed(2)} sat/vB</p>
+                            </div>
+                            <div class="block-stat">
+                                <h4>Total Weight</h4>
+                                <p>${stats.total_weight.toLocaleString()} WU</p>
+                            </div>
+                            <div class="block-stat">
+                                <h4>Timestamp</h4>
+                                <p>${new Date(header.timestamp * 1000).toLocaleString()}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="story-section">
+                        <h2>What Happened in This Block?</h2>
+                        <p>This block contains <strong>${txCount} transactions</strong> that were confirmed together on the Bitcoin blockchain.</p>
+                        <p>Miners collected a total of <strong>${(stats.total_fees_sats / 100000000).toFixed(8)} BTC</strong> in transaction fees.</p>
+                        <p>The average fee rate was <strong>${stats.avg_fee_rate_sat_vb.toFixed(2)} sat/vB</strong>, which indicates ${stats.avg_fee_rate_sat_vb > 50 ? 'high' : stats.avg_fee_rate_sat_vb > 20 ? 'medium' : 'low'} network demand at the time.</p>
+
+                        <h3>Script Types Used</h3>
+                        <div style="margin: 15px 0;">
+                            ${Object.entries(stats.script_type_summary).map(([type, count]) =>
+                                `<span class="badge" style="background: #667eea; color: white;">${type.toUpperCase()}: ${count}</span>`
+                            ).join('')}
+                        </div>
+                    </div>
+
+                    <div class="story-section">
+                        <h2>Block Header Details</h2>
+                        <div class="info-grid">
+                            <div class="info-card">
+                                <h4>Version</h4>
+                                <p>${header.version}</p>
+                            </div>
+                            <div class="info-card">
+                                <h4>Nonce</h4>
+                                <p>${header.nonce}</p>
+                            </div>
+                            <div class="info-card">
+                                <h4>Bits (Difficulty)</h4>
+                                <p>${header.bits}</p>
+                            </div>
+                            <div class="info-card">
+                                <h4>Merkle Root Valid</h4>
+                                <p>${header.merkle_root_valid ? '✓ Yes' : '✗ No'}</p>
+                            </div>
+                        </div>
+                        <div style="margin-top: 15px; font-size: 0.9em;">
+                            <p><strong>Previous Block:</strong> ${header.prev_block_hash}</p>
+                            <p><strong>Merkle Root:</strong> ${header.merkle_root}</p>
+                        </div>
+                    </div>
+
+                    ${block.coinbase ? `
+                        <div class="story-section">
+                            <h2>Coinbase Transaction (Miner Reward)</h2>
+                            <p>The first transaction in every block is special - it's called the <strong>coinbase transaction</strong>. This is how new bitcoins are created and how miners get paid.</p>
+                            <div class="info-grid">
+                                <div class="info-card">
+                                    <h4>Block Height (BIP34)</h4>
+                                    <p>${block.coinbase.bip34_height}</p>
+                                </div>
+                                <div class="info-card">
+                                    <h4>Miner Revenue</h4>
+                                    <p>${(block.coinbase.total_output_sats / 100000000).toFixed(8)} BTC</p>
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <div class="tx-list">
+                        <h2 style="color: #667eea; margin-bottom: 20px;">All Transactions (${txCount})</h2>
+                        ${block.transactions.map((tx, i) => renderBlockTransaction(tx, i)).join('')}
+                    </div>
+                `;
+            });
+
+            resultDiv.innerHTML = html;
+        }
+
+        function renderBlockTransaction(tx, index) {
+            const txId = `tx-${index}`;
+            const isCoinbase = index === 0;
+            const txidShort = tx.txid ? tx.txid.substring(0, 16) + '...' : 'Unknown';
+
+            return `
+                <div class="tx-item">
+                    <div class="tx-header" onclick="toggleTransaction('${txId}')">
+                        <div>
+                            <span style="color: #667eea; font-weight: bold;">${isCoinbase ? 'Coinbase' : `TX #${index}`}</span>
+                            <span style="margin-left: 15px; font-family: monospace; color: #666;">${txidShort}</span>
+                            ${tx.fee_sats ? `<span style="margin-left: 15px; color: #f5576c;">Fee: ${(tx.fee_sats / 100000000).toFixed(8)} BTC</span>` : ''}
+                        </div>
+                        <span class="tx-expand-icon" id="${txId}-icon">▶</span>
+                    </div>
+                    <div class="tx-details" id="${txId}-details">
+                        ${renderTransactionDetails(tx)}
+                    </div>
+                </div>
+            `;
+        }
+
+        function toggleTransaction(txId) {
+            const details = document.getElementById(`${txId}-details`);
+            const icon = document.getElementById(`${txId}-icon`);
+
+            details.classList.toggle('show');
+            icon.classList.toggle('expanded');
+        }
+
+        function renderTransactionDetails(tx) {
+            // Reuse the existing transaction rendering logic
+            const inputCount = tx.vin?.length || 0;
+            const outputCount = tx.vout?.length || 0;
+
+            return `
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                    <p><strong>TXID:</strong> <code style="font-size: 0.85em;">${tx.txid || 'N/A'}</code></p>
+                    <p><strong>Inputs:</strong> ${inputCount} | <strong>Outputs:</strong> ${outputCount}</p>
+                    ${tx.vbytes ? `<p><strong>Size:</strong> ${tx.vbytes} vBytes | <strong>Weight:</strong> ${tx.weight} WU</p>` : ''}
+                </div>
+
+                ${tx.vin && tx.vin.length > 0 ? `
+                    <h4 style="color: #667eea; margin-bottom: 10px;">Inputs</h4>
+                    ${tx.vin.map((input, i) => `
+                        <div style="background: #e3f2fd; padding: 12px; border-radius: 6px; margin-bottom: 8px;">
+                            <p><strong>Input #${i + 1}:</strong> ${(input.prevout.value_sats / 100000000).toFixed(8)} BTC</p>
+                            <p style="font-size: 0.85em;"><strong>Type:</strong> ${input.script_type.toUpperCase()}</p>
+                            ${input.address ? `<p style="font-size: 0.85em;"><strong>Address:</strong> ${input.address}</p>` : ''}
+                        </div>
+                    `).join('')}
+                ` : ''}
+
+                ${tx.vout && tx.vout.length > 0 ? `
+                    <h4 style="color: #764ba2; margin-top: 15px; margin-bottom: 10px;">Outputs</h4>
+                    ${tx.vout.map(output => `
+                        <div style="background: #f3e5f5; padding: 12px; border-radius: 6px; margin-bottom: 8px;">
+                            <p><strong>Output #${output.n + 1}:</strong> ${output.script_type === 'op_return' ? 'OP_RETURN (Data)' : `${(output.value_sats / 100000000).toFixed(8)} BTC`}</p>
+                            <p style="font-size: 0.85em;"><strong>Type:</strong> ${output.script_type.toUpperCase()}</p>
+                            ${output.address ? `<p style="font-size: 0.85em;"><strong>Address:</strong> ${output.address}</p>` : ''}
+                            ${output.op_return_data_utf8 ? `<p style="font-size: 0.85em;"><strong>Data:</strong> ${output.op_return_data_utf8}</p>` : ''}
+                        </div>
+                    `).join('')}
+                ` : ''}
+            `;
+        }
+
+        async function analyzeTransaction() {
+            const input = document.getElementById('fixtureInput').value.trim();
+            const resultDiv = document.getElementById('result');
+
+            if (!input) {
+                resultDiv.innerHTML = '<div class="error">Please paste a transaction fixture JSON</div>';
+                resultDiv.classList.add('show');
+                return;
+            }
+
+            try {
+                const fixture = JSON.parse(input);
+
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(fixture)
+                });
+
+                const data = await response.json();
+
+                if (!data.ok) {
+                    resultDiv.innerHTML = `<div class="error"><strong>Error:</strong> ${data.error.message}</div>`;
+                    resultDiv.classList.add('show');
+                    return;
+                }
+
+                renderResult(data);
+                resultDiv.classList.add('show');
+            } catch (e) {
+                resultDiv.innerHTML = `<div class="error"><strong>Error:</strong> ${e.message}</div>`;
+                resultDiv.classList.add('show');
+            }
+        }
+
+        function renderResult(tx) {
+            const resultDiv = document.getElementById('result');
+
+            const inputCount = tx.vin.length;
+            const outputCount = tx.vout.length;
+            const feeSats = tx.fee_sats;
+            const feeRateSatVb = tx.fee_rate_sat_vb.toFixed(2);
+
+            let html = `
+                <div class="story-section">
+                    <h2>What Happened?</h2>
+                    <p>This is a <strong>Bitcoin transaction</strong> that moved <strong>${(tx.total_output_sats / 100000000).toFixed(8)} BTC</strong>.</p>
+                    <p>It spent ${inputCount} input${inputCount > 1 ? 's' : ''} and created ${outputCount} output${outputCount > 1 ? 's' : ''}.</p>
+
+                    ${tx.segwit ? '<span class="badge segwit">SegWit Transaction</span>' : '<span class="badge legacy">Legacy Transaction</span>'}
+                    ${tx.rbf_signaling ? '<span class="badge rbf">RBF Enabled</span>' : ''}
+                </div>
+
+                <div class="story-section">
+                    <h2>Value Flow</h2>
+                    <div class="flow-diagram">
+                        <div class="flow-column">
+                            <h3 style="text-align: center; color: #667eea;">Inputs (Spent)</h3>
+                            ${tx.vin.map((input, i) => `
+                                <div class="flow-item">
+                                    Input #${i + 1}: ${(input.prevout.value_sats / 100000000).toFixed(8)} BTC
+                                    <small>${input.script_type.toUpperCase()} ${input.address || ''}</small>
+                                </div>
+                            `).join('')}
+                            <div style="text-align: center; margin-top: 15px; font-weight: 600; font-size: 1.2em;">
+                                Total: ${(tx.total_input_sats / 100000000).toFixed(8)} BTC
+                            </div>
+                        </div>
+
+                        <div class="flow-arrow">→</div>
+
+                        <div class="flow-column">
+                            <h3 style="text-align: center; color: #764ba2;">Outputs (Received)</h3>
+                            ${tx.vout.map(output => `
+                                <div class="flow-item">
+                                    ${output.script_type === 'op_return' ? 'OP_RETURN (Data)' : `${(output.value_sats / 100000000).toFixed(8)} BTC`}
+                                    <small>${output.script_type.toUpperCase()} ${output.address || ''}</small>
+                                </div>
+                            `).join('')}
+                            <div class="flow-item fee">
+                                Fee: ${(feeSats / 100000000).toFixed(8)} BTC
+                                <small>Goes to miners</small>
+                            </div>
+                            <div style="text-align: center; margin-top: 15px; font-weight: 600; font-size: 1.2em;">
+                                Total: ${(tx.total_input_sats / 100000000).toFixed(8)} BTC
+                            </div>
+                        </div>
+                    </div>
+
+                    <h3 style="margin-top: 30px;">Interactive Flow Diagram</h3>
+                    <div id="mermaidDiagram" style="background: white; padding: 20px; border-radius: 12px; margin: 20px 0;"></div>
+
+                    <h3>Transaction Cost</h3>
+                    <p>The transaction fee is <strong>${(feeSats / 100000000).toFixed(8)} BTC</strong> (${feeSats.toLocaleString()} satoshis).</p>
+                    <p>This fee goes to the Bitcoin miner who includes this transaction in a block.</p>
+                    <p>Fee rate: <strong>${feeRateSatVb} sat/vB</strong> - ${feeRateSatVb > 100 ? 'Very high priority' : feeRateSatVb > 50 ? 'High priority' : feeRateSatVb > 20 ? 'Medium priority' : 'Low priority'}</p>
+                </div>
+
+                <div class="story-section">
+                    <h2>Size & Weight</h2>
+                    <p>Transactions are measured by their <span class="tooltip" data-tooltip="The number of bytes in the transaction">size</span>. This transaction is <strong>${tx.size_bytes} bytes</strong>.</p>
+                    <p>For fee calculations, we use <span class="tooltip" data-tooltip="Virtual bytes - accounts for SegWit discount">vbytes</span>: <strong>${tx.vbytes} vB</strong></p>
+                    <p>Weight: <strong>${tx.weight} WU</strong> (Weight Units)</p>
+
+                    ${tx.segwit ? `
+                        <h3>SegWit Savings</h3>
+                        <p><strong>SegWit</strong> (Segregated Witness) separates signature data from transaction data, reducing the effective size and fees.</p>
+                        <div class="info-grid">
+                            <div class="info-card">
+                                <h4>Witness Data</h4>
+                                <p>${tx.segwit_savings.witness_bytes} bytes</p>
+                            </div>
+                            <div class="info-card">
+                                <h4>Savings</h4>
+                                <p>${tx.segwit_savings.savings_pct.toFixed(2)}%</p>
+                            </div>
+                            <div class="info-card">
+                                <h4>Weight (if legacy)</h4>
+                                <p>${tx.segwit_savings.weight_if_legacy} WU</p>
+                            </div>
+                            <div class="info-card">
+                                <h4>Actual Weight</h4>
+                                <p>${tx.segwit_savings.weight_actual} WU</p>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+
+                <div class="story-section">
+                    <h2>Script Types</h2>
+                    <p>Different <strong>script types</strong> represent different ways to receive and spend Bitcoin:</p>
+                    <ul style="margin-left: 20px; line-height: 2;">
+                        <li><strong>P2PKH</strong>: Pay-to-Public-Key-Hash (legacy)</li>
+                        <li><strong>P2SH</strong>: Pay-to-Script-Hash (can wrap complex scripts)</li>
+                        <li><strong>P2WPKH</strong>: Pay-to-Witness-Public-Key-Hash (native SegWit)</li>
+                        <li><strong>P2WSH</strong>: Pay-to-Witness-Script-Hash (native SegWit, complex scripts)</li>
+                        <li><strong>P2TR</strong>: Pay-to-Taproot (latest, most efficient)</li>
+                        <li><strong>OP_RETURN</strong>: Embed arbitrary data (not spendable)</li>
+                    </ul>
+
+                    <h3>This transaction uses:</h3>
+                    ${Array.from(new Set([...tx.vin.map(i => i.script_type), ...tx.vout.map(o => o.script_type)])).map(type =>
+                        `<span class="badge" style="background: #667eea; color: white;">${type.toUpperCase()}</span>`
+                    ).join('')}
+                </div>
+
+                ${tx.rbf_signaling || tx.locktime_type !== 'none' ? `
+                    <div class="story-section">
+                        <h2>Advanced Features</h2>
+
+                        ${tx.rbf_signaling ? `
+                            <h3>RBF (Replace-By-Fee)</h3>
+                            <p>This transaction signals <strong>RBF</strong>, meaning it can be replaced with a higher-fee version before being confirmed. This is useful if you want to speed up confirmation by increasing the fee.</p>
+                        ` : ''}
+
+                        ${tx.locktime_type !== 'none' ? `
+                            <h3>Timelock</h3>
+                            <p>This transaction has a <strong>${tx.locktime_type === 'block_height' ? 'block height' : 'timestamp'}</strong> locktime of <strong>${tx.locktime_value}</strong>.</p>
+                            <p>This means the transaction cannot be included in the blockchain until ${tx.locktime_type === 'block_height' ? 'block ' + tx.locktime_value : 'timestamp ' + tx.locktime_value}.</p>
+                        ` : ''}
+
+                        ${tx.vin.some(input => input.relative_timelock.enabled) ? `
+                            <h3>Relative Timelocks</h3>
+                            <p>Some inputs use <strong>relative timelocks</strong> (BIP68), which delay spending based on time elapsed since the previous transaction.</p>
+                            ${tx.vin.filter(i => i.relative_timelock.enabled).map((input, idx) => `
+                                <p>Input #${idx + 1}: ${input.relative_timelock.type === 'blocks' ?
+                                    input.relative_timelock.value + ' blocks' :
+                                    input.relative_timelock.value + ' seconds'}</p>
+                            `).join('')}
+                        ` : ''}
+                    </div>
+                ` : ''}
+
+                ${tx.warnings && tx.warnings.length > 0 ? `
+                    <div class="warning">
+                        <h4>Warnings</h4>
+                        <ul>
+                            ${tx.warnings.map(w => {
+                                let msg = '';
+                                if (w.code === 'HIGH_FEE') msg = 'This transaction has an unusually high fee';
+                                else if (w.code === 'DUST_OUTPUT') msg = 'Some outputs are very small (dust)';
+                                else if (w.code === 'UNKNOWN_OUTPUT_SCRIPT') msg = 'Contains unknown script types';
+                                else if (w.code === 'RBF_SIGNALING') msg = 'Transaction can be replaced (RBF)';
+                                else msg = w.code;
+                                return `<li>${msg}</li>`;
+                            }).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+
+                <div class="technical-details">
+                    <span class="toggle-technical" onclick="toggleTechnical()">Show Technical Details</span>
+                    <div id="technicalContent" class="technical-content">
+                        <pre>${JSON.stringify(tx, null, 2)}</pre>
+                    </div>
+                </div>
+            `;
+
+            resultDiv.innerHTML = html;
+
+            // Render Mermaid diagram
+            renderMermaidDiagram(tx);
+        }
+
+        function renderMermaidDiagram(tx) {
+            const container = document.getElementById('mermaidDiagram');
+            if (!container) return;
+
+            const inputs = tx.vin;
+            const outputs = tx.vout;
+            const hasFee = tx.fee_sats > 0;
+
+            // Layout constants
+            const nodeW = 190, nodeH = 56, gap = 16;
+            const leftX = 10, rightX = 420;
+            const svgW = rightX + nodeW + 10;
+
+            const rightNodes = outputs.length + (hasFee ? 1 : 0);
+            const rows = Math.max(inputs.length, rightNodes);
+            const svgH = rows * (nodeH + gap) + gap;
+
+            const inputYs  = inputs.map((_, i) =>
+                gap + i * (nodeH + gap) + nodeH / 2 +
+                ((rows - inputs.length) * (nodeH + gap)) / 2);
+            const outputYs = [...outputs.map((_, i) =>
+                gap + i * (nodeH + gap) + nodeH / 2 +
+                ((rows - rightNodes) * (nodeH + gap)) / 2),
+                ...(hasFee ? [gap + outputs.length * (nodeH + gap) + nodeH / 2 +
+                ((rows - rightNodes) * (nodeH + gap)) / 2] : [])];
+
+            const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            const short = s => s ? (s.length > 14 ? s.substring(0, 12) + '…' : s) : '';
+
+            let svg = `<svg viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg" `
+                    + `style="width:100%;max-height:420px;font-family:sans-serif;">`;
+
+            // Arrow marker
+            svg += `<defs><marker id="ah" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">`
+                 + `<polygon points="0 0,7 2.5,0 5" fill="#aab"/></marker></defs>`;
+
+            // Draw arrows (inputs → each right node)
+            inputs.forEach((_, i) => {
+                outputYs.forEach(oy => {
+                    svg += `<line x1="${leftX+nodeW}" y1="${inputYs[i]}" `
+                         + `x2="${rightX}" y2="${oy}" `
+                         + `stroke="#bbc" stroke-width="1.4" marker-end="url(#ah)" opacity="0.7"/>`;
+                });
+            });
+
+            // Draw input nodes
+            inputs.forEach((inp, i) => {
+                const btc = (inp.prevout.value_sats / 100000000).toFixed(6);
+                const lbl = short(inp.address || inp.script_type.toUpperCase());
+                const y = inputYs[i] - nodeH / 2;
+                svg += `<rect x="${leftX}" y="${y}" width="${nodeW}" height="${nodeH}" rx="8" fill="#667eea"/>`;
+                svg += `<text x="${leftX+nodeW/2}" y="${y+20}" text-anchor="middle" fill="#fff" `
+                     + `font-size="12" font-weight="bold">Input ${i+1}: ${esc(btc)} BTC</text>`;
+                svg += `<text x="${leftX+nodeW/2}" y="${y+38}" text-anchor="middle" fill="#dde" `
+                     + `font-size="11">${esc(lbl)}</text>`;
+            });
+
+            // Draw output nodes
+            outputs.forEach((out, i) => {
+                const isOR = out.script_type === 'op_return';
+                const btc = isOR ? 'OP_RETURN' : (out.value_sats / 100000000).toFixed(6) + ' BTC';
+                const lbl = short(out.address || out.script_type.toUpperCase());
+                const y = outputYs[i] - nodeH / 2;
+                svg += `<rect x="${rightX}" y="${y}" width="${nodeW}" height="${nodeH}" rx="8" fill="${isOR?'#888':'#764ba2'}"/>`;
+                svg += `<text x="${rightX+nodeW/2}" y="${y+20}" text-anchor="middle" fill="#fff" `
+                     + `font-size="12" font-weight="bold">Output ${i+1}: ${esc(btc)}</text>`;
+                svg += `<text x="${rightX+nodeW/2}" y="${y+38}" text-anchor="middle" fill="#dde" `
+                     + `font-size="11">${esc(lbl)}</text>`;
+            });
+
+            // Draw fee node
+            if (hasFee) {
+                const feeBtc = (tx.fee_sats / 100000000).toFixed(6);
+                const y = outputYs[outputYs.length - 1] - nodeH / 2;
+                svg += `<rect x="${rightX}" y="${y}" width="${nodeW}" height="${nodeH}" rx="8" fill="#f5576c"/>`;
+                svg += `<text x="${rightX+nodeW/2}" y="${y+20}" text-anchor="middle" fill="#fff" `
+                     + `font-size="12" font-weight="bold">Miner Fee: ${esc(feeBtc)} BTC</text>`;
+                svg += `<text x="${rightX+nodeW/2}" y="${y+38}" text-anchor="middle" fill="#fdd" `
+                     + `font-size="11">Goes to block miner</text>`;
+            }
+
+            svg += '</svg>';
+            container.innerHTML = svg;
+        }
+
+        function toggleTechnical() {
+            const content = document.getElementById('technicalContent');
+            content.classList.toggle('show');
+        }
+    </script>
+</body>
+</html>

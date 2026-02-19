@@ -1,0 +1,42 @@
+[package]
+name = "chain-lens"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cli"
+path = "src/main.rs"
+
+[[bin]]
+name = "web"
+path = "src/web.rs"
+
+[dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Hex encoding/decoding
+hex = "0.4"
+
+# Bitcoin primitives
+sha2 = "0.10"
+ripemd = "0.1"
+
+# Base58 encoding (for addresses)
+bs58 = { version = "0.5", features = ["check"] }
+
+# Bech32 encoding (for SegWit addresses)
+bech32 = "0.11"
+
+# Web server
+axum = { version = "0.7", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+[dev-dependencies]
