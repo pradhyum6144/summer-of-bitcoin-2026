@@ -7,7 +7,7 @@ mod types;
 use analyzer::analyze_transaction;
 use block::parse_and_analyze_block;
 use axum::{
-    extract::Multipart,
+    extract::{DefaultBodyLimit, Multipart},
     http::StatusCode,
     response::{Html, IntoResponse, Json},
     routing::{get, post},
@@ -29,11 +29,12 @@ async fn main() {
         .route("/api/health", get(health_handler))
         .route("/api/analyze", post(analyze_handler))
         .route("/api/analyze-block", post(analyze_block_handler))
+        .layer(DefaultBodyLimit::max(1024 * 1024 * 1024)) // 1 GB — covers large blk*.dat files
         .layer(CorsLayer::permissive());
 
-    println!("http://127.0.0.1:{}", port);
-
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    // Print URL only after the socket is bound so callers can connect immediately
+    println!("http://127.0.0.1:{}", port);
     axum::serve(listener, app).await.unwrap();
 }
 

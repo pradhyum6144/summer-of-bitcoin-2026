@@ -444,7 +444,9 @@ pub fn classify_input(script_sig: &[u8], witness: &[Vec<u8>], prevout_script: &[
             } else {
                 witness
             };
-            if effective.len() == 1 && effective[0].len() == 64 {
+            // BIP341: keypath witness = [sig] where sig is 64 bytes (SIGHASH_DEFAULT)
+            // or 65 bytes (explicit sighash type appended). Scriptpath needs >= 2 items.
+            if effective.len() == 1 && (effective[0].len() == 64 || effective[0].len() == 65) {
                 InputScriptType::P2TRKeypath
             } else {
                 InputScriptType::P2TRScriptpath

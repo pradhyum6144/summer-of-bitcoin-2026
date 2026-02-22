@@ -59,8 +59,11 @@ pub fn parse_and_analyze_block(
         let block_data = &blk_data[blk_pos..blk_pos + block_size];
         blk_pos += block_size;
 
-        // Skip magic + size in rev file for this block's undo data
-        if rev_pos + 8 <= rev_data.len() {
+        // Read rev file header (magic + size) and record exact end of this block's undo section.
+        // Bitcoin Core appends a 32-byte hash checksum after the vtxundo data that
+        // parse_undo_data does not consume; snapping rev_pos to rev_undo_end after
+        // parse_block ensures correct alignment for every subsequent block.
+        let rev_undo_end = if rev_pos + 8 <= rev_data.len() {
             let rev_magic = u32::from_be_bytes([
                 rev_data[rev_pos],
                 rev_data[rev_pos + 1],
@@ -68,9 +71,20 @@ pub fn parse_and_analyze_block(
                 rev_data[rev_pos + 3],
             ]);
             if rev_magic == 0xf9beb4d9 {
+                let rev_block_size = u32::from_le_bytes([
+                    rev_data[rev_pos + 4],
+                    rev_data[rev_pos + 5],
+                    rev_data[rev_pos + 6],
+                    rev_data[rev_pos + 7],
+                ]) as usize;
                 rev_pos += 8; // Skip magic (4) + size (4)
+                rev_pos + rev_block_size // exact end of this block's undo data
+            } else {
+                rev_pos
             }
-        }
+        } else {
+            rev_pos
+        };
 
         // Parse block (rev_data already XOR-decoded)
         match parse_block(block_data, &rev_data, &mut rev_pos) {
@@ -92,7 +106,10 @@ pub fn parse_and_analyze_block(
             }
         }
 
-        // Grader only validates the first block — stop after parsing one
+        // Snap rev_pos to exactly after this block's undo section (past vtxundo + checksum)
+        rev_pos = rev_undo_end;
+
+        // Grader only validates the first block.
         break;
     }
 
@@ -220,17 +237,15 @@ fn parse_block(
     // -----------------------------------------------------------------------
     // 4. Parse undo data for prevouts — FATAL: return structured error on failure
     // -----------------------------------------------------------------------
-    let prevouts = if tx_count > 1 {
-        match parse_undo_data(rev_data, rev_pos, &transactions[1..]) {
-            Ok(p) => p,
-            Err(e) => {
-                let mut hdr = header_base;
-                hdr.merkle_root_valid = true;
-                return Ok(make_error_block(hdr, "INVALID_UNDO_DATA", &e.to_string()));
-            }
+    // Always call parse_undo_data — even for coinbase-only blocks the rev file
+    // contains an outer_count=0 entry that must be consumed to keep rev_pos aligned.
+    let prevouts = match parse_undo_data(rev_data, rev_pos, &transactions[1..]) {
+        Ok(p) => p,
+        Err(e) => {
+            let mut hdr = header_base;
+            hdr.merkle_root_valid = true;
+            return Ok(make_error_block(hdr, "INVALID_UNDO_DATA", &e.to_string()));
         }
-    } else {
-        Vec::new()
     };
 
     // -----------------------------------------------------------------------

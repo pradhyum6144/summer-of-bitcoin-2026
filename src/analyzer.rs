@@ -45,10 +45,10 @@ pub fn analyze_transaction(
         }
     };
 
-    // Check for duplicate prevouts
+    // Check for duplicate prevouts (normalize txid to lowercase for case-insensitive matching)
     let mut seen_prevout_keys = std::collections::HashSet::new();
     for p in prevouts {
-        if !seen_prevout_keys.insert((p.txid.clone(), p.vout)) {
+        if !seen_prevout_keys.insert((p.txid.to_lowercase(), p.vout)) {
             return Ok(TransactionOutput {
                 ok: false,
                 error: Some(ErrorInfo {
@@ -65,20 +65,21 @@ pub fn analyze_transaction(
         }
     }
 
-    // Build prevout lookup map
+    // Build prevout lookup map (lowercase txid for case-insensitive matching)
     let mut prevout_map: HashMap<(String, u32), &Prevout> = HashMap::new();
     for prevout in prevouts {
-        prevout_map.insert((prevout.txid.clone(), prevout.vout), prevout);
+        prevout_map.insert((prevout.txid.to_lowercase(), prevout.vout), prevout);
     }
 
     // Check for prevouts that don't correspond to any input outpoint
+    // hex::encode always produces lowercase, so normalize fixture txids too
     let input_outpoints: std::collections::HashSet<(String, u32)> = tx
         .inputs
         .iter()
         .map(|i| (hex::encode(&i.prev_txid), i.prev_vout))
         .collect();
     for p in prevouts {
-        if !input_outpoints.contains(&(p.txid.clone(), p.vout)) {
+        if !input_outpoints.contains(&(p.txid.to_lowercase(), p.vout)) {
             return Ok(TransactionOutput {
                 ok: false,
                 error: Some(ErrorInfo {
@@ -220,7 +221,10 @@ pub fn analyze_transaction(
     let rbf_signaling = tx.inputs.iter().any(|i| i.sequence < 0xfffffffe);
 
     // Locktime analysis
-    let (locktime_type, locktime_value) = analyze_locktime(tx.locktime);
+    // Per Bitcoin consensus: locktime is only enforced when at least one input has sequence < 0xFFFFFFFF.
+    // If ALL inputs have sequence == 0xFFFFFFFF, locktime is disabled ("hidden").
+    let locktime_disabled = tx.inputs.iter().all(|i| i.sequence == 0xffffffff);
+    let (locktime_type, locktime_value) = analyze_locktime(tx.locktime, locktime_disabled);
 
     // SegWit savings
     let segwit_savings = if tx.has_witness {
@@ -286,8 +290,8 @@ fn analyze_relative_timelock(sequence: u32) -> RelativeTimelock {
     }
 }
 
-fn analyze_locktime(locktime: u32) -> (String, u32) {
-    if locktime == 0 {
+fn analyze_locktime(locktime: u32, disabled: bool) -> (String, u32) {
+    if locktime == 0 || disabled {
         ("none".to_string(), locktime)
     } else if locktime < 500_000_000 {
         ("block_height".to_string(), locktime)
