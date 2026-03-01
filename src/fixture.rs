@@ -215,6 +215,16 @@ fn detect_script_type(script_pubkey_hex: &str) -> Option<&'static str> {
     None
 }
 
+/// Determine whether to override declared script_type with detected type.
+/// P2SH sub-types (p2sh-p2wpkh, p2sh-p2wsh) share the same a914...87 script pattern
+/// as plain p2sh, so we preserve the declared sub-type when hex detects "p2sh".
+fn should_override(detected: &str, declared: &str) -> bool {
+    if detected == "p2sh" && (declared == "p2sh-p2wpkh" || declared == "p2sh-p2wsh") {
+        return false;
+    }
+    true
+}
+
 /// Normalize a fixture after parsing and validation:
 /// - Override script_type with detected type from script_pubkey_hex (hex is authoritative)
 /// - Deduplicate UTXOs by (txid, vout)
@@ -226,20 +236,26 @@ pub fn normalize_fixture(fixture: &mut Fixture) {
     // Override script_type from script_pubkey_hex for UTXOs
     for utxo in &mut fixture.utxos {
         if let Some(detected) = detect_script_type(&utxo.script_pubkey_hex) {
-            utxo.script_type = detected.to_string();
+            if should_override(detected, &utxo.script_type) {
+                utxo.script_type = detected.to_string();
+            }
         }
     }
 
     // Override script_type from script_pubkey_hex for payments
     for payment in &mut fixture.payments {
         if let Some(detected) = detect_script_type(&payment.script_pubkey_hex) {
-            payment.script_type = detected.to_string();
+            if should_override(detected, &payment.script_type) {
+                payment.script_type = detected.to_string();
+            }
         }
     }
 
     // Override script_type from script_pubkey_hex for change template
     if let Some(detected) = detect_script_type(&fixture.change.script_pubkey_hex) {
-        fixture.change.script_type = detected.to_string();
+        if should_override(detected, &fixture.change.script_type) {
+            fixture.change.script_type = detected.to_string();
+        }
     }
 }
 
