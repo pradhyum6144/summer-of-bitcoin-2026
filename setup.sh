@@ -8,6 +8,7 @@ set -euo pipefail
 # This script is run once before grading to set up the environment.
 ###############################################################################
 
-
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cargo build --release --manifest-path "$SCRIPT_DIR/Cargo.toml"
 
 echo "Setup complete"

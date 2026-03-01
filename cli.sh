@@ -47,22 +47,13 @@ mkdir -p out
 FIXTURE_NAME="$(basename "$FIXTURE")"
 OUTPUT_FILE="out/$FIXTURE_NAME"
 
-# TODO: Implement your PSBT builder here
-#   1. Read fixture JSON (network, utxos, payments, change, fee_rate_sat_vb, rbf, locktime, …)
-#   2. Validate inputs defensively (reject malformed fixtures with structured errors)
-#   3. Select coins (UTXOs) to cover payments + estimated fee
-#   4. Determine change output (skip if dust; handle fee/change interaction)
-#   5. Set nSequence and nLockTime per RBF / locktime rules
-#   6. Build unsigned PSBT (BIP-174) with witness_utxo / non_witness_utxo metadata
-#   7. Emit warnings (HIGH_FEE, DUST_CHANGE, SEND_ALL, RBF_SIGNALING, …)
-#   8. Write JSON report to $OUTPUT_FILE
-#
-# Example:
-#   python builder.py "$FIXTURE" "$OUTPUT_FILE"
-#   node builder.js "$FIXTURE" "$OUTPUT_FILE"
-#   cargo run -- "$FIXTURE" "$OUTPUT_FILE"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BINARY="$SCRIPT_DIR/target/release/coin-smith"
 
-ERROR_OUTPUT=$(error_json "NOT_IMPLEMENTED" "PSBT builder is not yet implemented")
-echo "$ERROR_OUTPUT" > "$OUTPUT_FILE"
-echo "Error: PSBT builder is not yet implemented" >&2
-exit 1
+# Build if needed
+if [[ ! -f "$BINARY" ]]; then
+  echo "Building coin-smith..." >&2
+  cargo build --release --bin coin-smith --manifest-path "$SCRIPT_DIR/Cargo.toml" >&2
+fi
+
+exec "$BINARY" "$FIXTURE" "$OUTPUT_FILE"

@@ -3,3 +3,8 @@ node_modules/
 __pycache__/
 target/
 .env
+
+
+# Added by cargo
+
+/target

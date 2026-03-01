@@ -17,11 +17,14 @@ set -euo pipefail
 
 PORT="${PORT:-3000}"
 
-# TODO: Start your web server here, for example:
-#   exec node server.js
-#   exec python -m http.server "$PORT"
-#   exec cargo run --release -- --port "$PORT"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BINARY="$SCRIPT_DIR/target/release/coin-smith-web"
 
-echo "Error: Web visualizer is not yet implemented" >&2
-echo "Set up your web server to listen on port $PORT" >&2
-exit 1
+# Build if needed
+if [[ ! -f "$BINARY" ]]; then
+  echo "Building coin-smith-web..." >&2
+  cargo build --release --bin coin-smith-web --manifest-path "$SCRIPT_DIR/Cargo.toml" >&2
+fi
+
+export PORT
+exec "$BINARY"
