@@ -162,12 +162,13 @@ pub fn validate_fixture(fixture: &Fixture) -> Result<(), BuildError> {
             message: "Change has invalid script_pubkey_hex".to_string(),
         });
     }
+    validate_script_type(&fixture.change.script_type, 0, "Change")?;
 
     // Validate fee rate
-    if fixture.fee_rate_sat_vb <= 0.0 {
+    if !fixture.fee_rate_sat_vb.is_finite() || fixture.fee_rate_sat_vb <= 0.0 {
         return Err(BuildError {
             code: "INVALID_FIXTURE".to_string(),
-            message: "Fee rate must be positive".to_string(),
+            message: "Fee rate must be a finite positive number".to_string(),
         });
     }
 
