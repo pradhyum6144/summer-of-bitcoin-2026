@@ -144,6 +144,11 @@ pub fn build_report_full(
     if selection.fee > 1_000_000 || fee_rate_actual > 200.0 {
         warnings.push(Warning { code: "HIGH_FEE".to_string() });
     }
+    for (i, payment) in fixture.payments.iter().enumerate() {
+        if payment.value_sats < 546 {
+            warnings.push(Warning { code: format!("DUST_PAYMENT_{}", i) });
+        }
+    }
     if let Some(change_amount) = selection.change_amount {
         if change_amount < 546 {
             warnings.push(Warning { code: "DUST_CHANGE".to_string() });

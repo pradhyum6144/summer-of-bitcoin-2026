@@ -146,6 +146,7 @@ pub fn validate_fixture(fixture: &Fixture) -> Result<(), BuildError> {
                 message: format!("Payment {} has invalid script_pubkey_hex", i),
             });
         }
+        validate_script_type(&payment.script_type, i, "Payment")?;
     }
 
     // Validate change
