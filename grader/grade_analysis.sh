@@ -78,29 +78,120 @@ for blk_file in "${blk_files[@]}"; do
   fi
   print_pass "JSON output exists: ${blk_stem}.json"
 
-  json_content=$(cat "$json_file")
   json_base="${blk_stem}.json"
 
   # Check valid JSON
-  if ! is_valid_json "$json_content"; then
+  if ! jq empty "$json_file" 2>/dev/null; then
     print_fail "$json_base is valid JSON"
     continue
   fi
   print_pass "$json_base is valid JSON"
 
+  # ---------------------------------------------------------------------------
+  # Single-pass jq extraction: read the large file ONCE, produce a small object
+  # ---------------------------------------------------------------------------
+  check_data=$(jq -c '{
+    top: {
+      ok: .ok,
+      mode: (.mode // null),
+      file_exists: ((.file // null) != null),
+      block_count: .block_count,
+      block_count_type: (.block_count | type),
+      blocks_type: (.blocks | type),
+      blocks_len: (.blocks | length),
+      summary_exists: ((.analysis_summary // null) != null)
+    },
+    blocks: [.blocks | to_entries[] | .key as $idx | .value | {
+      idx: $idx,
+      block_hash: (.block_hash // ""),
+      block_hash_valid: ((.block_hash // "") | test("^[0-9a-f]{64}$")),
+      tx_count: .tx_count,
+      tx_count_type: (.tx_count | type),
+      summary_exists: ((.analysis_summary // null) != null),
+      heuristic_count: ((.analysis_summary.heuristics_applied // []) | length),
+      has_cioh: ((.analysis_summary.heuristics_applied // []) | index("cioh") != null),
+      has_change: ((.analysis_summary.heuristics_applied // []) | index("change_detection") != null),
+      fee_valid: ((.analysis_summary.fee_rate_stats // null) |
+        if . == null then false
+        elif .min_sat_vb == null or .max_sat_vb == null or .median_sat_vb == null or .mean_sat_vb == null then false
+        elif .min_sat_vb < 0 or .max_sat_vb < 0 or .median_sat_vb < 0 or .mean_sat_vb < 0 then false
+        elif .min_sat_vb > .median_sat_vb then false
+        elif .median_sat_vb > .max_sat_vb then false
+        else true end),
+      flagged: (.analysis_summary.flagged_transactions // null),
+      flagged_valid: (
+        .tx_count as $tc |
+        .analysis_summary.flagged_transactions |
+        if . == null or $tc == null then null
+        elif type != "number" then false
+        elif . < 0 then false
+        elif . > $tc then false
+        else true end),
+      tx_array_len: (if $idx == 0 then ((.transactions // []) | length) else null end),
+      tx_array_type: (if $idx == 0 then ((.transactions // null) | type) else null end)
+    }],
+    agg: {
+      sum_tx: ([.blocks[].tx_count] | add),
+      file_total: (.analysis_summary.total_transactions_analyzed // null),
+      sum_flagged: ([.blocks[].analysis_summary.flagged_transactions] | add),
+      file_flagged: (.analysis_summary.flagged_transactions // null),
+      file_fee_valid: ((.analysis_summary.fee_rate_stats // null) |
+        if . == null then false
+        elif .min_sat_vb == null or .max_sat_vb == null or .median_sat_vb == null or .mean_sat_vb == null then false
+        elif .min_sat_vb < 0 or .max_sat_vb < 0 or .median_sat_vb < 0 or .mean_sat_vb < 0 then false
+        elif .min_sat_vb > .median_sat_vb then false
+        elif .median_sat_vb > .max_sat_vb then false
+        else true end),
+      file_heuristic_count: ((.analysis_summary.heuristics_applied // []) | length)
+    }
+  }' "$json_file" 2>/dev/null)
+
+  # Helper to query the small check_data object
+  chk() { echo "$check_data" | jq -r "$1" 2>/dev/null; }
+
   # -----------------------------------------------------------------------
   # Top-level field validation
   # -----------------------------------------------------------------------
-  assert_field_equals_json "$json_content" ".ok" "true" "$json_base: ok == true" || true
-  assert_field_equals "$json_content" ".mode" "chain_analysis" "$json_base: mode == chain_analysis" || true
-  assert_field_exists "$json_content" ".file" "$json_base: file field exists" || true
-  assert_field_type "$json_content" ".block_count" "number" "$json_base: block_count is number" || true
-  assert_field_type "$json_content" ".blocks" "array" "$json_base: blocks is array" || true
-  assert_field_exists "$json_content" ".analysis_summary" "$json_base: file-level analysis_summary exists" || true
+  if [[ "$(chk '.top.ok')" == "true" ]]; then
+    print_pass "$json_base: ok == true"
+  else
+    print_fail "$json_base: ok == true" "Expected: true, Got: $(chk '.top.ok')"
+  fi
+
+  local_mode=$(chk '.top.mode')
+  if [[ "$local_mode" == "chain_analysis" ]]; then
+    print_pass "$json_base: mode == chain_analysis"
+  else
+    print_fail "$json_base: mode == chain_analysis" "Expected: chain_analysis, Got: $local_mode"
+  fi
+
+  if [[ "$(chk '.top.file_exists')" == "true" ]]; then
+    print_pass "$json_base: file field exists"
+  else
+    print_fail "$json_base: file field exists" "Field .file is missing or null"
+  fi
+
+  if [[ "$(chk '.top.block_count_type')" == "number" ]]; then
+    print_pass "$json_base: block_count is number"
+  else
+    print_fail "$json_base: block_count is number" "Expected type: number, Got: $(chk '.top.block_count_type')"
+  fi
+
+  if [[ "$(chk '.top.blocks_type')" == "array" ]]; then
+    print_pass "$json_base: blocks is array"
+  else
+    print_fail "$json_base: blocks is array" "Expected type: array, Got: $(chk '.top.blocks_type')"
+  fi
+
+  if [[ "$(chk '.top.summary_exists')" == "true" ]]; then
+    print_pass "$json_base: file-level analysis_summary exists"
+  else
+    print_fail "$json_base: file-level analysis_summary exists" "Field .analysis_summary is missing or null"
+  fi
 
   # Verify block_count == blocks array length
-  block_count=$(echo "$json_content" | jq '.block_count' 2>/dev/null) || block_count="null"
-  blocks_len=$(echo "$json_content" | jq '.blocks | length' 2>/dev/null) || blocks_len="null"
+  block_count=$(chk '.top.block_count')
+  blocks_len=$(chk '.top.blocks_len')
   if [[ "$block_count" != "null" && "$blocks_len" != "null" && "$block_count" == "$blocks_len" ]]; then
     print_pass "$json_base: block_count ($block_count) == blocks length"
   else
@@ -117,18 +208,39 @@ for blk_file in "${blk_files[@]}"; do
 
   for block_idx in $(seq 0 $((blocks_len - 1))); do
     block_prefix="$json_base: blocks[$block_idx]"
-    block_json=$(echo "$json_content" | jq ".blocks[$block_idx]" 2>/dev/null)
 
-    # Per-block field checks
-    assert_field_matches "$block_json" ".block_hash" "$HEX64_REGEX" "$block_prefix: block_hash is hex64" || true
-    assert_field_type "$block_json" ".tx_count" "number" "$block_prefix: tx_count is number" || true
-    assert_field_exists "$block_json" ".analysis_summary" "$block_prefix: analysis_summary exists" || true
+    # block_hash is hex64
+    if [[ "$(chk ".blocks[$block_idx].block_hash_valid")" == "true" ]]; then
+      print_pass "$block_prefix: block_hash is hex64"
+    else
+      print_fail "$block_prefix: block_hash is hex64" "Value '$(chk ".blocks[$block_idx].block_hash")' does not match regex: $HEX64_REGEX"
+    fi
 
-    # Validate transactions array only for the first block (perf: skip for others)
+    # tx_count is number
+    if [[ "$(chk ".blocks[$block_idx].tx_count_type")" == "number" ]]; then
+      print_pass "$block_prefix: tx_count is number"
+    else
+      print_fail "$block_prefix: tx_count is number" "Expected type: number, Got: $(chk ".blocks[$block_idx].tx_count_type")"
+    fi
+
+    # analysis_summary exists
+    if [[ "$(chk ".blocks[$block_idx].summary_exists")" == "true" ]]; then
+      print_pass "$block_prefix: analysis_summary exists"
+    else
+      print_fail "$block_prefix: analysis_summary exists" "Field .analysis_summary is missing or null"
+    fi
+
+    # Validate transactions array only for the first block
     if [[ "$block_idx" -eq 0 ]]; then
-      assert_field_type "$block_json" ".transactions" "array" "$block_prefix: transactions is array" || true
+      tx_array_type=$(chk ".blocks[0].tx_array_type")
+      if [[ "$tx_array_type" == "array" ]]; then
+        print_pass "$block_prefix: transactions is array"
+      else
+        print_fail "$block_prefix: transactions is array" "Expected type: array, Got: $tx_array_type"
+      fi
 
-      tx_array_len=$(echo "$block_json" | jq '.transactions | length' 2>/dev/null) || tx_array_len="null"
+      tx_count=$(chk ".blocks[0].tx_count")
+      tx_array_len=$(chk ".blocks[0].tx_array_len")
       if [[ "$tx_count" != "null" && "$tx_array_len" != "null" && "$tx_count" == "$tx_array_len" ]]; then
         print_pass "$block_prefix: transactions length ($tx_array_len) == tx_count ($tx_count)"
       else
@@ -137,7 +249,7 @@ for blk_file in "${blk_files[@]}"; do
     fi
 
     # Check heuristics_applied has at least 5 distinct IDs
-    heuristic_count=$(echo "$block_json" | jq '.analysis_summary.heuristics_applied | length' 2>/dev/null) || heuristic_count=0
+    heuristic_count=$(chk ".blocks[$block_idx].heuristic_count")
     if [[ "$heuristic_count" -ge 5 ]]; then
       print_pass "$block_prefix: at least 5 heuristics applied ($heuristic_count)"
     else
@@ -145,53 +257,34 @@ for blk_file in "${blk_files[@]}"; do
     fi
 
     # Check cioh and change_detection are in heuristics_applied
-    has_cioh=$(echo "$block_json" | jq '.analysis_summary.heuristics_applied | index("cioh") != null' 2>/dev/null) || has_cioh="false"
-    has_change=$(echo "$block_json" | jq '.analysis_summary.heuristics_applied | index("change_detection") != null' 2>/dev/null) || has_change="false"
-    if [[ "$has_cioh" == "true" ]]; then
+    if [[ "$(chk ".blocks[$block_idx].has_cioh")" == "true" ]]; then
       print_pass "$block_prefix: cioh in heuristics_applied"
     else
       print_fail "$block_prefix: cioh in heuristics_applied"
     fi
-    if [[ "$has_change" == "true" ]]; then
+    if [[ "$(chk ".blocks[$block_idx].has_change")" == "true" ]]; then
       print_pass "$block_prefix: change_detection in heuristics_applied"
     else
       print_fail "$block_prefix: change_detection in heuristics_applied"
     fi
 
-    # Validate fee_rate_stats consistency: min <= median <= max, all non-negative
-    fee_valid=$(echo "$block_json" | jq '
-      .analysis_summary.fee_rate_stats |
-      if . == null then false
-      elif .min_sat_vb == null or .max_sat_vb == null or .median_sat_vb == null or .mean_sat_vb == null then false
-      elif .min_sat_vb < 0 or .max_sat_vb < 0 or .median_sat_vb < 0 or .mean_sat_vb < 0 then false
-      elif .min_sat_vb > .median_sat_vb then false
-      elif .median_sat_vb > .max_sat_vb then false
-      else true
-      end
-    ' 2>/dev/null) || fee_valid="false"
-    if [[ "$fee_valid" == "true" ]]; then
+    # Validate fee_rate_stats consistency
+    if [[ "$(chk ".blocks[$block_idx].fee_valid")" == "true" ]]; then
       print_pass "$block_prefix: fee_rate_stats consistent (min <= median <= max, non-negative)"
     else
       print_fail "$block_prefix: fee_rate_stats consistency"
     fi
 
     # Check flagged_transactions is a non-negative integer <= tx_count
-    reported_flagged=$(echo "$block_json" | jq '.analysis_summary.flagged_transactions' 2>/dev/null) || reported_flagged="null"
-    if [[ "$reported_flagged" != "null" && "$tx_count" != "null" ]]; then
-      flagged_valid=$(echo "$block_json" | jq --argjson tc "$tx_count" '
-        .analysis_summary.flagged_transactions |
-        if type != "number" then false
-        elif . < 0 then false
-        elif . > $tc then false
-        else true end
-      ' 2>/dev/null) || flagged_valid="false"
-      if [[ "$flagged_valid" == "true" ]]; then
-        print_pass "$block_prefix: flagged_transactions ($reported_flagged) is valid (0 <= n <= tx_count)"
-      else
-        print_fail "$block_prefix: flagged_transactions" "Expected 0 <= n <= $tx_count, got $reported_flagged"
-      fi
-    else
+    flagged_valid=$(chk ".blocks[$block_idx].flagged_valid")
+    reported_flagged=$(chk ".blocks[$block_idx].flagged")
+    tx_count=$(chk ".blocks[$block_idx].tx_count")
+    if [[ "$flagged_valid" == "null" ]]; then
       print_fail "$block_prefix: flagged_transactions" "Field missing or null"
+    elif [[ "$flagged_valid" == "true" ]]; then
+      print_pass "$block_prefix: flagged_transactions ($reported_flagged) is valid (0 <= n <= tx_count)"
+    else
+      print_fail "$block_prefix: flagged_transactions" "Expected 0 <= n <= $tx_count, got $reported_flagged"
     fi
   done
 
@@ -201,8 +294,8 @@ for blk_file in "${blk_files[@]}"; do
   print_section "File-level aggregation for $blk_base"
 
   # total_transactions_analyzed == sum of per-block tx_counts
-  sum_tx=$(echo "$json_content" | jq '[.blocks[].tx_count] | add' 2>/dev/null) || sum_tx="null"
-  file_total=$(echo "$json_content" | jq '.analysis_summary.total_transactions_analyzed' 2>/dev/null) || file_total="null"
+  sum_tx=$(chk '.agg.sum_tx')
+  file_total=$(chk '.agg.file_total')
   if [[ "$sum_tx" != "null" && "$file_total" != "null" && "$sum_tx" == "$file_total" ]]; then
     print_pass "$json_base: file-level total_transactions_analyzed ($file_total) == sum of block tx_counts"
   else
@@ -210,8 +303,8 @@ for blk_file in "${blk_files[@]}"; do
   fi
 
   # flagged_transactions == sum of per-block flagged
-  sum_flagged=$(echo "$json_content" | jq '[.blocks[].analysis_summary.flagged_transactions] | add' 2>/dev/null) || sum_flagged="null"
-  file_flagged=$(echo "$json_content" | jq '.analysis_summary.flagged_transactions' 2>/dev/null) || file_flagged="null"
+  sum_flagged=$(chk '.agg.sum_flagged')
+  file_flagged=$(chk '.agg.file_flagged')
   if [[ "$sum_flagged" != "null" && "$file_flagged" != "null" && "$sum_flagged" == "$file_flagged" ]]; then
     print_pass "$json_base: file-level flagged_transactions ($file_flagged) == sum of per-block flagged"
   else
@@ -219,24 +312,14 @@ for blk_file in "${blk_files[@]}"; do
   fi
 
   # File-level fee_rate_stats consistency
-  file_fee_valid=$(echo "$json_content" | jq '
-    .analysis_summary.fee_rate_stats |
-    if . == null then false
-    elif .min_sat_vb == null or .max_sat_vb == null or .median_sat_vb == null or .mean_sat_vb == null then false
-    elif .min_sat_vb < 0 or .max_sat_vb < 0 or .median_sat_vb < 0 or .mean_sat_vb < 0 then false
-    elif .min_sat_vb > .median_sat_vb then false
-    elif .median_sat_vb > .max_sat_vb then false
-    else true
-    end
-  ' 2>/dev/null) || file_fee_valid="false"
-  if [[ "$file_fee_valid" == "true" ]]; then
+  if [[ "$(chk '.agg.file_fee_valid')" == "true" ]]; then
     print_pass "$json_base: file-level fee_rate_stats consistent"
   else
     print_fail "$json_base: file-level fee_rate_stats consistency"
   fi
 
   # File-level heuristics_applied has at least 5
-  file_heuristic_count=$(echo "$json_content" | jq '.analysis_summary.heuristics_applied | length' 2>/dev/null) || file_heuristic_count=0
+  file_heuristic_count=$(chk '.agg.file_heuristic_count')
   if [[ "$file_heuristic_count" -ge 5 ]]; then
     print_pass "$json_base: file-level at least 5 heuristics applied ($file_heuristic_count)"
   else
