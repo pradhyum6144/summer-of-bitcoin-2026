@@ -166,13 +166,15 @@ Each `out/<blk_stem>.json` must conform to the following schema. Since a single 
 - `block_height`: integer, decoded from coinbase BIP34.
 - `tx_count`: integer, total number of transactions in the block.
 - `analysis_summary`: per-block summary, same shape as file-level summary. `total_transactions_analyzed` must equal `tx_count`. `flagged_transactions` must match the actual count of transactions with at least one `detected: true` heuristic.
-- `transactions`: array of per-transaction analysis results. Length must equal `tx_count`.
+- `transactions`: array of per-transaction analysis results. **Required for the first block** (`blocks[0]`): the grader validates that the array exists and its length equals `tx_count`. **Optional for subsequent blocks** — you may omit it or use an empty array to reduce JSON size and speed up grading.
 
 **Per-transaction fields (each element of `blocks[].transactions[]`):**
 
 - `txid`: hex string (64 chars).
 - `heuristics`: object mapping heuristic ID → result object. Each result must have a `detected` boolean field.
 - `classification`: one of `"simple_payment"`, `"consolidation"`, `"coinjoin"`, `"self_transfer"`, `"batch_payment"`, `"unknown"`.
+
+> **Note:** The automated grader validates the `transactions` array (existence + length) for the first block only. Including full per-transaction data for all blocks is encouraged for your own analysis and web UI, but not required for grading.
 
 ---
 
@@ -285,7 +287,8 @@ Include a link to your demo video in `demo.md` at the repository root. The file 
 - `block_count` matches the length of the `blocks` array
 - File-level aggregated summary is consistent with per-block summaries
 - At least 5 heuristics are applied per block, including `cioh` and `change_detection`
-- `flagged_transactions` count is consistent with per-transaction `detected` flags
+- `transactions` array is present and correct for the first block (length == `tx_count`)
+- `flagged_transactions` count is consistent (per-block values are valid, file-level sum matches)
 - Fee rate statistics are consistent (min ≤ median ≤ max, all non-negative)
 - Markdown reports exist in `out/` for each block file and are reproducible
 - `APPROACH.md` exists and documents at least 5 heuristics
@@ -303,7 +306,8 @@ Evaluation happens in two phases:
 
 - **Schema validation:** JSON output is checked for required fields, correct types, and valid values.
 - **Heuristic coverage:** at least 5 heuristics applied, `cioh` and `change_detection` mandatory.
-- **Consistency checks:** `flagged_transactions` matches actual flags, fee rate stats are ordered correctly, `tx_count` matches transactions array length, file-level aggregation matches per-block data.
+- **Transaction validation:** `transactions` array is validated for the first block only (type check + length == tx_count). Subsequent blocks may omit it.
+- **Consistency checks:** `flagged_transactions` is valid (0 ≤ n ≤ tx_count), fee rate stats are ordered correctly, file-level aggregation matches per-block data.
 - **Report reproducibility:** committed Markdown reports exist and re-running `cli.sh` produces similar reports.
 - **Documentation:** `APPROACH.md` exists, is substantial (>500 bytes), and covers at least 5 heuristics. `demo.md` contains a valid video link.
 - **Web health check:** `web.sh` must start and respond to `GET /api/health`.
