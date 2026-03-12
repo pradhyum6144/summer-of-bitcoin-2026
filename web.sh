@@ -1,27 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-###############################################################################
-# web.sh — Web visualizer
-#
-# Starts the web visualizer server.
-#
-# Behavior:
-#   - Reads PORT env var (default: 3000)
-#   - Prints the URL (e.g., http://127.0.0.1:3000) to stdout
-#   - Keeps running until terminated (CTRL+C / SIGTERM)
-#   - Must serve GET /api/health -> 200 { "ok": true }
-#
-# TODO: Replace the stub below with your web server start command.
-###############################################################################
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PORT="${PORT:-3000}"
 
-PORT="${PORT:-3000}"
+# Build if needed
+if [[ ! -f "$SCRIPT_DIR/target/release/web" ]]; then
+  echo "Building web server..." >&2
+  cargo build --release --bin web --manifest-path "$SCRIPT_DIR/Cargo.toml" >&2
+fi
 
-# TODO: Start your web server here, for example:
-#   exec node server.js
-#   exec python -m http.server "$PORT"
-#   exec cargo run --release -- --port "$PORT"
-
-echo "Error: Web visualizer is not yet implemented" >&2
-echo "Set up your web server to listen on port $PORT" >&2
-exit 1
+exec "$SCRIPT_DIR/target/release/web"

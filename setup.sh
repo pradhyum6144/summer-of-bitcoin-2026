@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-###############################################################################
-# setup.sh — Install project dependencies
-#
-# Add your install commands below (e.g., npm install, pip install, cargo build).
-# This script is run once before grading to set up the environment.
-###############################################################################
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Decompress block fixtures if not already present
-for gz in fixtures/*.dat.gz; do
+for gz in "$SCRIPT_DIR"/fixtures/*.dat.gz; do
   dat="${gz%.gz}"
   if [[ ! -f "$dat" ]]; then
     echo "Decompressing $(basename "$gz")..."
     gunzip -k "$gz"
   fi
 done
+
+# Build Rust binary
+echo "Building sherlock..."
+cargo build --release --manifest-path "$SCRIPT_DIR/Cargo.toml"
 
 echo "Setup complete"
