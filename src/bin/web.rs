@@ -386,19 +386,10 @@ function renderAll(){
 
   // Heuristics
   h+=`<div class="section"><div class="section-label">Heuristics Applied — Confidence Model</div><div class="heur-grid" id="heuristicsGrid">`;
-  // compute per-block heuristic fire counts
+  // use per-block heuristic counts from analysis summary
   const heurStats={};
-  HEUR_META.forEach(m=>{heurStats[m.id]={fired:0,total:b.tx_count}});
-  if(allTxs.length>0){
-    allTxs.forEach(tx=>{
-      HEUR_META.forEach(m=>{
-        if(tx.heuristics&&tx.heuristics[m.id]&&tx.heuristics[m.id].detected)heurStats[m.id].fired++;
-      });
-    });
-  }else{
-    // estimate from block summary flagged
-    HEUR_META.forEach(m=>{heurStats[m.id].fired=Math.round(b.tx_count*0.5)});
-  }
+  const hc=bs.heuristic_counts||{};
+  HEUR_META.forEach(m=>{heurStats[m.id]={fired:hc[m.id]||0,total:b.tx_count}});
   HEUR_META.forEach((m,idx)=>{
     const st=heurStats[m.id];
     const rate=st.total?(st.fired/st.total*100).toFixed(1):'0';
@@ -438,7 +429,7 @@ function renderAll(){
     h+=renderTxSection();
   }else{
     h+=`<div class="section"><div class="section-label">Transactions</div>`;
-    h+=`<div class="empty-panel"><div class="ep-icon">&#9744;</div><p>Transaction data available for the first block only.<br>Select block 0 to inspect individual transactions.</p></div></div>`;
+    h+=`<div class="empty-panel"><div class="ep-icon">&#9744;</div><p>Individual transaction details available for block 0.<br>Block-level metrics shown above for all blocks.</p></div></div>`;
   }
 
   document.getElementById('mainCol').innerHTML=h;
@@ -602,10 +593,7 @@ function renderDetailPanel(){
 
   // Classification legend
   h+=`<div class="dp-section"><div class="dp-label">Classification Legend</div><div class="cls-legend">`;
-  const clsCounts={};
-  if(allTxs.length>0){
-    allTxs.forEach(tx=>{clsCounts[tx.classification]=(clsCounts[tx.classification]||0)+1});
-  }
+  const clsCounts=bs.classification_counts||{};
   [{cls:'coinjoin',color:'#111',label:'CoinJoin'},{cls:'consolidation',color:'#555',label:'Consolidation'},
    {cls:'simple_payment',color:'#aaa',label:'Simple Pay'},{cls:'batch_payment',color:'#777',label:'Batch'},
    {cls:'self_transfer',color:'#ccc',label:'Self Transfer'},{cls:'unknown',color:'#e0e0e0',label:'Unknown'}
@@ -621,13 +609,14 @@ function renderDetailPanel(){
   h+=`<div class="dp-section"><div class="dp-label">Transaction I/O Graph</div>`;
   h+=`<div class="empty-panel"><div class="ep-icon">&#8644;</div><p>Select a transaction from the table<br>to view its input/output graph.</p></div></div>`;
 
-  // Fee distribution
-  h+=`<div class="dp-section"><div class="dp-label">Fee Rate Distribution</div>`;
+  // Fee distribution (per-block)
+  const bfr=bs.fee_rate_stats;
+  h+=`<div class="dp-section"><div class="dp-label">Fee Rate Distribution (Block)</div>`;
   h+=`<div class="fee-grid">`;
-  h+=`<div class="fee-cell"><div class="fl">MIN</div><div class="fv">${s.fee_rate_stats.min_sat_vb.toFixed(1)}</div></div>`;
-  h+=`<div class="fee-cell"><div class="fl">MEDIAN</div><div class="fv">${s.fee_rate_stats.median_sat_vb.toFixed(1)}</div></div>`;
-  h+=`<div class="fee-cell"><div class="fl">MEAN</div><div class="fv">${s.fee_rate_stats.mean_sat_vb.toFixed(1)}</div></div>`;
-  h+=`<div class="fee-cell"><div class="fl">MAX</div><div class="fv">${s.fee_rate_stats.max_sat_vb.toFixed(1)}</div></div>`;
+  h+=`<div class="fee-cell"><div class="fl">MIN</div><div class="fv">${bfr.min_sat_vb.toFixed(1)}</div></div>`;
+  h+=`<div class="fee-cell"><div class="fl">MEDIAN</div><div class="fv">${bfr.median_sat_vb.toFixed(1)}</div></div>`;
+  h+=`<div class="fee-cell"><div class="fl">MEAN</div><div class="fv">${bfr.mean_sat_vb.toFixed(1)}</div></div>`;
+  h+=`<div class="fee-cell"><div class="fl">MAX</div><div class="fv">${bfr.max_sat_vb.toFixed(1)}</div></div>`;
   h+=`</div>`;
 
   // Fee ruler
