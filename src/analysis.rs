@@ -260,8 +260,12 @@ fn analyze_consolidation(tx: &Transaction, prevout_scripts: &[ScriptType]) -> Co
         false
     };
 
+    // When undo data is unavailable (prevout_scripts empty), fall back to
+    // input/output count ratio: many inputs to few outputs is likely consolidation
+    let fallback = prevout_scripts.is_empty() && many_inputs && few_outputs;
+
     ConsolidationResult {
-        detected: many_inputs && few_outputs && (same_script_types || tx.outputs.len() == 1),
+        detected: many_inputs && few_outputs && (same_script_types || tx.outputs.len() == 1 || fallback),
     }
 }
 
@@ -279,13 +283,30 @@ fn analyze_round_number(tx: &Transaction) -> RoundNumberResult {
     }
 }
 
-/// Address Reuse Detection — same script appears in inputs and outputs
+/// Address Reuse Detection — same script appears in inputs and outputs.
+/// Only flags wallet script types (P2PKH, P2WPKH, P2TR) where reuse is a
+/// privacy mistake. Skips P2SH/P2WSH (exchange/contract infrastructure where
+/// reuse is intentional), OP_RETURN, empty scripts, and other non-wallet types.
 fn analyze_address_reuse(tx: &Transaction, prevout_scripts_raw: &[Vec<u8>]) -> AddressReuseResult {
+    fn is_wallet_script(script: &[u8]) -> bool {
+        if script.is_empty() {
+            return false;
+        }
+        matches!(
+            classify_script(script),
+            ScriptType::P2PKH | ScriptType::P2WPKH | ScriptType::P2TR
+        )
+    }
+
     let output_scripts: Vec<&[u8]> = tx.outputs.iter()
         .map(|o| o.script_pubkey.as_slice())
+        .filter(|s| is_wallet_script(s))
         .collect();
 
     for prev_script in prevout_scripts_raw {
+        if !is_wallet_script(prev_script) {
+            continue;
+        }
         if output_scripts.contains(&prev_script.as_slice()) {
             return AddressReuseResult { detected: true };
         }
@@ -294,9 +315,12 @@ fn analyze_address_reuse(tx: &Transaction, prevout_scripts_raw: &[Vec<u8>]) -> A
 }
 
 /// Self-Transfer Detection — all outputs match input script type pattern
+/// Requires address reuse or single output to avoid false positives on
+/// normal payments where sender and recipient happen to use the same script type.
 fn analyze_self_transfer(
     tx: &Transaction,
     prevout_scripts: &[ScriptType],
+    address_reuse: &AddressReuseResult,
 ) -> SelfTransferResult {
     if prevout_scripts.is_empty() || tx.outputs.is_empty() {
         return SelfTransferResult { detected: false };
@@ -308,9 +332,12 @@ fn analyze_self_transfer(
         ot == input_type
     });
 
-    // Self transfer: all outputs same type as inputs, and 1-2 outputs
+    // Self transfer: all outputs same type as inputs, and 1-2 outputs,
+    // AND either address reuse detected or single output (no external recipient)
     SelfTransferResult {
-        detected: all_outputs_match && tx.outputs.len() <= 2,
+        detected: all_outputs_match
+            && tx.outputs.len() <= 2
+            && (address_reuse.detected || tx.outputs.len() == 1),
     }
 }
 
@@ -392,7 +419,7 @@ pub fn analyze_block(
                 },
                 classification: TxClassification::Unknown,
                 fee: None,
-                vsize: (tx.weight as f64) / 4.0,
+                vsize: ((tx.weight + 3) / 4) as f64,
                 fee_rate: None,
             });
             continue;
@@ -429,7 +456,7 @@ pub fn analyze_block(
             None
         };
 
-        let vsize = if tx.weight > 0 { (tx.weight as f64) / 4.0 } else { 1.0 };
+        let vsize = if tx.weight > 0 { ((tx.weight + 3) / 4) as f64 } else { 1.0 };
         let fee_rate = fee.map(|f| f as f64 / vsize);
 
         // Run heuristics
@@ -439,7 +466,7 @@ pub fn analyze_block(
         let consolidation = analyze_consolidation(tx, &prevout_scripts);
         let round_number = analyze_round_number(tx);
         let address_reuse = analyze_address_reuse(tx, &prevout_scripts_raw);
-        let self_transfer = analyze_self_transfer(tx, &prevout_scripts);
+        let self_transfer = analyze_self_transfer(tx, &prevout_scripts, &address_reuse);
 
         // CIOH assumption is violated by CoinJoins — multiple parties contribute inputs
         if coinjoin.detected {
@@ -458,13 +485,21 @@ pub fn analyze_block(
 
         let classification = classify_transaction(tx, &heuristics);
 
-        let is_flagged = heuristics.cioh.detected
-            || heuristics.change_detection.detected
+        // CIOH alone (2+ inputs) is normal; only flag when combined with
+        // address reuse or absence of change output (suggests single entity)
+        let cioh_suspicious = heuristics.cioh.detected
+            && (heuristics.address_reuse.detected
+                || !heuristics.change_detection.detected);
+
+        // Self-transfer alone is just wallet maintenance; only flag when
+        // address reuse confirms it's genuinely the same wallet
+        let self_transfer_suspicious = heuristics.self_transfer.detected
+            && heuristics.address_reuse.detected;
+
+        let is_flagged = cioh_suspicious
             || heuristics.coinjoin.detected
             || heuristics.consolidation.detected
-            || heuristics.round_number.detected
-            || heuristics.address_reuse.detected
-            || heuristics.self_transfer.detected;
+            || self_transfer_suspicious;
 
         if is_flagged {
             flagged_count += 1;

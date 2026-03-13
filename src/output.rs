@@ -107,6 +107,45 @@ fn build_script_type_dist(dist: &HashMap<String, usize>) -> Value {
     Value::Object(obj)
 }
 
+fn compute_heuristic_counts(analyses: &[TxAnalysis]) -> Value {
+    let mut cioh = 0usize;
+    let mut change = 0usize;
+    let mut coinjoin = 0usize;
+    let mut consolidation = 0usize;
+    let mut round_number = 0usize;
+    let mut address_reuse = 0usize;
+    let mut self_transfer = 0usize;
+
+    for ta in analyses {
+        if ta.fee.is_none() { continue; } // skip coinbase
+        if ta.heuristics.cioh.detected { cioh += 1; }
+        if ta.heuristics.change_detection.detected { change += 1; }
+        if ta.heuristics.coinjoin.detected { coinjoin += 1; }
+        if ta.heuristics.consolidation.detected { consolidation += 1; }
+        if ta.heuristics.round_number.detected { round_number += 1; }
+        if ta.heuristics.address_reuse.detected { address_reuse += 1; }
+        if ta.heuristics.self_transfer.detected { self_transfer += 1; }
+    }
+
+    json!({
+        "cioh": cioh,
+        "change_detection": change,
+        "coinjoin": coinjoin,
+        "consolidation": consolidation,
+        "round_number_payment": round_number,
+        "address_reuse": address_reuse,
+        "self_transfer": self_transfer,
+    })
+}
+
+fn compute_classification_counts(analyses: &[TxAnalysis]) -> Value {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for ta in analyses {
+        *counts.entry(ta.classification.as_str()).or_insert(0) += 1;
+    }
+    json!(counts)
+}
+
 fn build_block_json(ba: &BlockAnalysis, include_txs: bool) -> Value {
     // Non-coinbase tx analyses for fee stats
     let non_cb_analyses: Vec<&TxAnalysis> = ba.tx_analyses.iter()
@@ -114,6 +153,8 @@ fn build_block_json(ba: &BlockAnalysis, include_txs: bool) -> Value {
         .collect();
 
     let fee_stats = compute_fee_rate_stats(&non_cb_analyses);
+    let heuristic_counts = compute_heuristic_counts(&ba.tx_analyses);
+    let classification_counts = compute_classification_counts(&ba.tx_analyses);
 
     let transactions = if include_txs {
         let txs: Vec<Value> = ba.tx_analyses.iter()
@@ -132,6 +173,8 @@ fn build_block_json(ba: &BlockAnalysis, include_txs: bool) -> Value {
             "total_transactions_analyzed": ba.tx_count,
             "heuristics_applied": HEURISTIC_IDS,
             "flagged_transactions": ba.flagged_count,
+            "heuristic_counts": heuristic_counts,
+            "classification_counts": classification_counts,
             "script_type_distribution": build_script_type_dist(&ba.script_type_dist),
             "fee_rate_stats": fee_stats,
         },
@@ -162,6 +205,14 @@ pub fn build_output_json(
         .collect();
     let agg_fee_stats = compute_fee_rate_stats(&all_non_cb);
 
+    // Aggregate heuristic and classification counts
+    let all_txs: Vec<&TxAnalysis> = block_analyses.iter()
+        .flat_map(|ba| ba.tx_analyses.iter())
+        .collect();
+    let all_tx_owned: Vec<TxAnalysis> = all_txs.iter().map(|t| (*t).clone()).collect();
+    let agg_heuristic_counts = compute_heuristic_counts(&all_tx_owned);
+    let agg_classification_counts = compute_classification_counts(&all_tx_owned);
+
     // Build per-block JSON (full txs only for first block)
     let blocks_json: Vec<Value> = block_analyses.iter().enumerate()
         .map(|(i, ba)| build_block_json(ba, i == 0))
@@ -176,6 +227,8 @@ pub fn build_output_json(
             "total_transactions_analyzed": total_txs,
             "heuristics_applied": HEURISTIC_IDS,
             "flagged_transactions": total_flagged,
+            "heuristic_counts": agg_heuristic_counts,
+            "classification_counts": agg_classification_counts,
             "script_type_distribution": build_script_type_dist(&agg_dist),
             "fee_rate_stats": agg_fee_stats,
         },
@@ -236,7 +289,12 @@ pub fn build_markdown_report(
         md.push_str("## Fee Rate Distribution\n\n");
         md.push_str("| Stat | sat/vB |\n|---|---|\n");
         md.push_str(&format!("| Min | {:.2} |\n", rates[0]));
-        md.push_str(&format!("| Median | {:.2} |\n", rates[rates.len() / 2]));
+        let median = if rates.len() % 2 == 0 {
+            (rates[rates.len() / 2 - 1] + rates[rates.len() / 2]) / 2.0
+        } else {
+            rates[rates.len() / 2]
+        };
+        md.push_str(&format!("| Median | {:.2} |\n", median));
         md.push_str(&format!("| Mean | {:.2} |\n",
             rates.iter().sum::<f64>() / rates.len() as f64));
         md.push_str(&format!("| Max | {:.2} |\n", rates[rates.len() - 1]));
