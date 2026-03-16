@@ -690,3 +690,374 @@ pub fn is_coinbase(tx: &Transaction) -> bool {
         && tx.inputs[0].prev_txid == [0u8; 32]
         && tx.inputs[0].prev_vout == 0xFFFFFFFF
 }
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── XOR Decode ──────────────────────────────────────────────────────
+
+    #[test]
+    fn xor_decode_roundtrip() {
+        let data = b"hello world";
+        let key = b"key";
+        let encoded = xor_decode(data, key);
+        let decoded = xor_decode(&encoded, key);
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn xor_decode_empty_key_is_identity() {
+        let data = b"some data";
+        let result = xor_decode(data, b"");
+        assert_eq!(result, data);
+    }
+
+    #[test]
+    fn xor_decode_empty_data() {
+        let result = xor_decode(b"", b"key");
+        assert!(result.is_empty());
+    }
+
+    // ── Varint ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn read_varint_single_byte() {
+        let data = [0x0A];
+        let mut cur = Cursor::new(data.as_ref());
+        assert_eq!(read_varint(&mut cur).unwrap(), 10);
+    }
+
+    #[test]
+    fn read_varint_two_byte() {
+        // 0xFD followed by u16 LE 0x0104 = 260
+        let data = [0xFD, 0x04, 0x01];
+        let mut cur = Cursor::new(data.as_ref());
+        assert_eq!(read_varint(&mut cur).unwrap(), 260);
+    }
+
+    #[test]
+    fn read_varint_four_byte() {
+        // 0xFE followed by u32 LE
+        let data = [0xFE, 0x01, 0x00, 0x01, 0x00];
+        let mut cur = Cursor::new(data.as_ref());
+        assert_eq!(read_varint(&mut cur).unwrap(), 65537);
+    }
+
+    #[test]
+    fn read_varint_boundary_252() {
+        let data = [0xFC]; // 252, max single-byte
+        let mut cur = Cursor::new(data.as_ref());
+        assert_eq!(read_varint(&mut cur).unwrap(), 252);
+    }
+
+    // ── Push varint ─────────────────────────────────────────────────────
+
+    #[test]
+    fn push_varint_single_byte() {
+        let mut buf = Vec::new();
+        push_varint(&mut buf, 100);
+        assert_eq!(buf, vec![100]);
+    }
+
+    #[test]
+    fn push_varint_two_byte() {
+        let mut buf = Vec::new();
+        push_varint(&mut buf, 0xFD); // 253
+        assert_eq!(buf[0], 0xFD);
+        assert_eq!(u16::from_le_bytes([buf[1], buf[2]]), 253);
+    }
+
+    #[test]
+    fn push_varint_four_byte() {
+        let mut buf = Vec::new();
+        push_varint(&mut buf, 0x10000);
+        assert_eq!(buf[0], 0xFE);
+        assert_eq!(u32::from_le_bytes([buf[1], buf[2], buf[3], buf[4]]), 0x10000);
+    }
+
+    // ── Varint size ─────────────────────────────────────────────────────
+
+    #[test]
+    fn varint_size_values() {
+        assert_eq!(varint_size(0), 1);
+        assert_eq!(varint_size(252), 1);
+        assert_eq!(varint_size(253), 3);
+        assert_eq!(varint_size(0xFFFF), 3);
+        assert_eq!(varint_size(0x10000), 5);
+        assert_eq!(varint_size(0xFFFF_FFFF), 5);
+        assert_eq!(varint_size(0x1_0000_0000), 9);
+    }
+
+    // ── Script Classification ───────────────────────────────────────────
+
+    #[test]
+    fn classify_p2pkh() {
+        // OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
+        let mut script = vec![0x76, 0xA9, 0x14];
+        script.extend_from_slice(&[0xAA; 20]);
+        script.push(0x88);
+        script.push(0xAC);
+        assert_eq!(classify_script(&script), ScriptType::P2PKH);
+    }
+
+    #[test]
+    fn classify_p2sh() {
+        // OP_HASH160 <20 bytes> OP_EQUAL
+        let mut script = vec![0xA9, 0x14];
+        script.extend_from_slice(&[0xBB; 20]);
+        script.push(0x87);
+        assert_eq!(classify_script(&script), ScriptType::P2SH);
+    }
+
+    #[test]
+    fn classify_p2wpkh() {
+        // OP_0 <20 bytes>
+        let mut script = vec![0x00, 0x14];
+        script.extend_from_slice(&[0xCC; 20]);
+        assert_eq!(classify_script(&script), ScriptType::P2WPKH);
+    }
+
+    #[test]
+    fn classify_p2wsh() {
+        // OP_0 <32 bytes>
+        let mut script = vec![0x00, 0x20];
+        script.extend_from_slice(&[0xDD; 32]);
+        assert_eq!(classify_script(&script), ScriptType::P2WSH);
+    }
+
+    #[test]
+    fn classify_p2tr() {
+        // OP_1 <32 bytes>
+        let mut script = vec![0x51, 0x20];
+        script.extend_from_slice(&[0xEE; 32]);
+        assert_eq!(classify_script(&script), ScriptType::P2TR);
+    }
+
+    #[test]
+    fn classify_op_return() {
+        let script = vec![0x6A, 0x04, 0x01, 0x02, 0x03, 0x04];
+        assert_eq!(classify_script(&script), ScriptType::OpReturn);
+    }
+
+    #[test]
+    fn classify_p2pk_compressed() {
+        // <33 byte pubkey> OP_CHECKSIG
+        let mut script = vec![0x21]; // push 33 bytes
+        script.extend_from_slice(&[0x02; 33]);
+        script.push(0xAC);
+        assert_eq!(classify_script(&script), ScriptType::P2PK);
+    }
+
+    #[test]
+    fn classify_unknown_empty() {
+        assert_eq!(classify_script(&[]), ScriptType::Unknown);
+    }
+
+    #[test]
+    fn classify_unknown_random() {
+        assert_eq!(classify_script(&[0x01, 0x02, 0x03]), ScriptType::Unknown);
+    }
+
+    #[test]
+    fn script_type_as_str() {
+        assert_eq!(ScriptType::P2PKH.as_str(), "p2pkh");
+        assert_eq!(ScriptType::P2SH.as_str(), "p2sh");
+        assert_eq!(ScriptType::P2WPKH.as_str(), "p2wpkh");
+        assert_eq!(ScriptType::P2WSH.as_str(), "p2wsh");
+        assert_eq!(ScriptType::P2TR.as_str(), "p2tr");
+        assert_eq!(ScriptType::OpReturn.as_str(), "op_return");
+        assert_eq!(ScriptType::P2PK.as_str(), "p2pk");
+        assert_eq!(ScriptType::Unknown.as_str(), "unknown");
+    }
+
+    // ── BIP34 Height Extraction ─────────────────────────────────────────
+
+    #[test]
+    fn bip34_height_3_bytes() {
+        // 0x03 = 3 bytes, then height 800000 = 0x0C3500 LE
+        let script = vec![0x03, 0x00, 0x35, 0x0C];
+        assert_eq!(extract_bip34_height(&script), Some(800000));
+    }
+
+    #[test]
+    fn bip34_height_1_byte() {
+        let script = vec![0x01, 0x05]; // height = 5
+        assert_eq!(extract_bip34_height(&script), Some(5));
+    }
+
+    #[test]
+    fn bip34_height_empty() {
+        assert_eq!(extract_bip34_height(&[]), None);
+    }
+
+    #[test]
+    fn bip34_height_zero_nbytes() {
+        assert_eq!(extract_bip34_height(&[0x00]), None);
+    }
+
+    #[test]
+    fn bip34_height_too_long() {
+        assert_eq!(extract_bip34_height(&[0x05, 0x01, 0x02, 0x03, 0x04, 0x05]), None);
+    }
+
+    // ── Coinbase Detection ──────────────────────────────────────────────
+
+    fn make_coinbase_tx() -> Transaction {
+        Transaction {
+            txid: [0u8; 32],
+            version: 1,
+            inputs: vec![TxInput {
+                prev_txid: [0u8; 32],
+                prev_vout: 0xFFFFFFFF,
+                script_sig: vec![0x03, 0x00, 0x35, 0x0C],
+                sequence: 0xFFFFFFFF,
+            }],
+            outputs: vec![TxOutput { value: 625000000, script_pubkey: vec![0x76, 0xa9] }],
+            witness: vec![],
+            lock_time: 0,
+            is_segwit: false,
+            raw_size: 100,
+            weight: 400,
+        }
+    }
+
+    fn make_regular_tx(num_inputs: usize, num_outputs: usize) -> Transaction {
+        let inputs = (0..num_inputs).map(|i| TxInput {
+            prev_txid: {
+                let mut h = [0u8; 32];
+                h[0] = (i + 1) as u8;
+                h
+            },
+            prev_vout: 0,
+            script_sig: vec![],
+            sequence: 0xFFFFFFFF,
+        }).collect();
+        let outputs = (0..num_outputs).map(|_| TxOutput {
+            value: 50000,
+            script_pubkey: make_p2wpkh_script(),
+        }).collect();
+        Transaction {
+            txid: [1u8; 32],
+            version: 2,
+            inputs,
+            outputs,
+            witness: vec![],
+            lock_time: 0,
+            is_segwit: false,
+            raw_size: 200,
+            weight: 800,
+        }
+    }
+
+    fn make_p2wpkh_script() -> Vec<u8> {
+        let mut s = vec![0x00, 0x14];
+        s.extend_from_slice(&[0xAA; 20]);
+        s
+    }
+
+    fn make_p2tr_script() -> Vec<u8> {
+        let mut s = vec![0x51, 0x20];
+        s.extend_from_slice(&[0xBB; 32]);
+        s
+    }
+
+    #[test]
+    fn coinbase_detected() {
+        assert!(is_coinbase(&make_coinbase_tx()));
+    }
+
+    #[test]
+    fn non_coinbase_detected() {
+        assert!(!is_coinbase(&make_regular_tx(1, 1)));
+    }
+
+    // ── Hash Hex Reversed ───────────────────────────────────────────────
+
+    #[test]
+    fn hash_to_hex_reversed_correct() {
+        let mut hash = [0u8; 32];
+        hash[0] = 0xAB;
+        hash[31] = 0xCD;
+        let hex = hash_to_hex_reversed(&hash);
+        assert_eq!(hex.len(), 64);
+        assert!(hex.starts_with("cd"));
+        assert!(hex.ends_with("ab"));
+    }
+
+    // ── Double SHA256 ───────────────────────────────────────────────────
+
+    #[test]
+    fn double_sha256_deterministic() {
+        let a = double_sha256(b"test data");
+        let b = double_sha256(b"test data");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn double_sha256_different_inputs() {
+        let a = double_sha256(b"hello");
+        let b = double_sha256(b"world");
+        assert_ne!(a, b);
+    }
+
+    // ── Compressed Amount ───────────────────────────────────────────────
+
+    #[test]
+    fn decompress_amount_zero() {
+        assert_eq!(decompress_amount(0), 0);
+    }
+
+    #[test]
+    fn decompress_amount_nonzero() {
+        // Verify round-trip consistency: for known values, decompress should
+        // produce a non-zero amount
+        let result = decompress_amount(1);
+        assert!(result > 0);
+    }
+
+    // ── Block Parsing (edge cases) ──────────────────────────────────────
+
+    #[test]
+    fn parse_blocks_empty_data() {
+        let result = parse_blocks(&[]);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_blocks_bad_magic() {
+        let data = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let result = parse_blocks(&data);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    // ── Core Varint ─────────────────────────────────────────────────────
+
+    #[test]
+    fn core_varint_zero() {
+        let data = [0x00];
+        let mut cur = Cursor::new(data.as_ref());
+        assert_eq!(read_core_varint(&mut cur).unwrap(), 0);
+    }
+
+    #[test]
+    fn core_varint_single_byte() {
+        let data = [0x7F]; // 127
+        let mut cur = Cursor::new(data.as_ref());
+        assert_eq!(read_core_varint(&mut cur).unwrap(), 127);
+    }
+
+    #[test]
+    fn core_varint_multi_byte() {
+        // 0x80 | 0x00 = 0x80 (continuation), then 0x00 (final)
+        // First byte: n = 0, then b=0x80 -> n = (0<<7)|0 = 0, bit 7 set so n = 0+1 = 1
+        // Second byte: b=0x00 -> n = (1<<7)|0 = 128, bit 7 not set, done
+        let data = [0x80, 0x00];
+        let mut cur = Cursor::new(data.as_ref());
+        assert_eq!(read_core_varint(&mut cur).unwrap(), 128);
+    }
+}

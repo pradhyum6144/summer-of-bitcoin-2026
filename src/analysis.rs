@@ -554,3 +554,550 @@ fn is_round_number(sats: u64) -> bool {
     ];
     thresholds.iter().any(|&t| sats % t == 0)
 }
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::*;
+
+    // ── Test Helpers ────────────────────────────────────────────────────
+
+    fn make_p2wpkh_script() -> Vec<u8> {
+        let mut s = vec![0x00, 0x14];
+        s.extend_from_slice(&[0xAA; 20]);
+        s
+    }
+
+    fn make_p2tr_script() -> Vec<u8> {
+        let mut s = vec![0x51, 0x20];
+        s.extend_from_slice(&[0xBB; 32]);
+        s
+    }
+
+    fn make_p2pkh_script() -> Vec<u8> {
+        let mut s = vec![0x76, 0xA9, 0x14];
+        s.extend_from_slice(&[0xCC; 20]);
+        s.push(0x88);
+        s.push(0xAC);
+        s
+    }
+
+    fn make_tx(inputs: usize, outputs: Vec<TxOutput>) -> Transaction {
+        let ins = (0..inputs).map(|i| TxInput {
+            prev_txid: { let mut h = [0u8; 32]; h[0] = (i + 1) as u8; h },
+            prev_vout: 0,
+            script_sig: vec![],
+            sequence: 0xFFFFFFFF,
+        }).collect();
+        Transaction {
+            txid: [1u8; 32],
+            version: 2,
+            inputs: ins,
+            outputs,
+            witness: vec![],
+            lock_time: 0,
+            is_segwit: false,
+            raw_size: 200,
+            weight: 800,
+        }
+    }
+
+    fn make_coinbase_tx() -> Transaction {
+        Transaction {
+            txid: [0u8; 32],
+            version: 1,
+            inputs: vec![TxInput {
+                prev_txid: [0u8; 32],
+                prev_vout: 0xFFFFFFFF,
+                script_sig: vec![0x03, 0x00, 0x35, 0x0C],
+                sequence: 0xFFFFFFFF,
+            }],
+            outputs: vec![TxOutput { value: 625000000, script_pubkey: make_p2wpkh_script() }],
+            witness: vec![],
+            lock_time: 0,
+            is_segwit: false,
+            raw_size: 100,
+            weight: 400,
+        }
+    }
+
+    // ── is_round_number ─────────────────────────────────────────────────
+
+    #[test]
+    fn round_number_1_btc() {
+        assert!(is_round_number(100_000_000));
+    }
+
+    #[test]
+    fn round_number_01_btc() {
+        assert!(is_round_number(10_000_000));
+    }
+
+    #[test]
+    fn round_number_001_btc() {
+        assert!(is_round_number(1_000_000));
+    }
+
+    #[test]
+    fn round_number_smallest_threshold() {
+        assert!(is_round_number(1_000));
+    }
+
+    #[test]
+    fn round_number_5_btc() {
+        assert!(is_round_number(500_000_000));
+    }
+
+    #[test]
+    fn not_round_number() {
+        assert!(!is_round_number(12345678));
+    }
+
+    #[test]
+    fn round_number_zero() {
+        assert!(!is_round_number(0));
+    }
+
+    // ── most_common ─────────────────────────────────────────────────────
+
+    #[test]
+    fn most_common_single() {
+        assert_eq!(most_common(&[ScriptType::P2WPKH]), ScriptType::P2WPKH);
+    }
+
+    #[test]
+    fn most_common_majority() {
+        let types = vec![ScriptType::P2WPKH, ScriptType::P2TR, ScriptType::P2WPKH];
+        assert_eq!(most_common(&types), ScriptType::P2WPKH);
+    }
+
+    #[test]
+    fn most_common_empty() {
+        assert_eq!(most_common(&[]), ScriptType::Unknown);
+    }
+
+    // ── CIOH ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn cioh_single_input_not_detected() {
+        let tx = make_tx(1, vec![TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() }]);
+        let result = analyze_cioh(&tx);
+        assert!(!result.detected);
+    }
+
+    #[test]
+    fn cioh_multiple_inputs_detected() {
+        let tx = make_tx(3, vec![TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() }]);
+        let result = analyze_cioh(&tx);
+        assert!(result.detected);
+    }
+
+    // ── Change Detection ────────────────────────────────────────────────
+
+    #[test]
+    fn change_detection_single_output_not_detected() {
+        let tx = make_tx(1, vec![
+            TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let result = analyze_change_detection(&tx, &[ScriptType::P2WPKH], &[50000]);
+        assert!(!result.detected);
+    }
+
+    #[test]
+    fn change_detection_script_type_match() {
+        // 1 input P2WPKH, 2 outputs: P2TR (payment) + P2WPKH (change)
+        let tx = make_tx(1, vec![
+            TxOutput { value: 40000, script_pubkey: make_p2tr_script() },
+            TxOutput { value: 9000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let result = analyze_change_detection(&tx, &[ScriptType::P2WPKH], &[50000]);
+        assert!(result.detected);
+        assert_eq!(result.likely_change_index, Some(1));
+        assert_eq!(result.method, "script_type_match");
+        assert_eq!(result.confidence, "high");
+    }
+
+    #[test]
+    fn change_detection_round_number_method() {
+        // Both outputs same script type, but one is round
+        let tx = make_tx(1, vec![
+            TxOutput { value: 10_000_000, script_pubkey: make_p2wpkh_script() }, // 0.1 BTC round
+            TxOutput { value: 1_234_567, script_pubkey: make_p2wpkh_script() },  // non-round
+        ]);
+        // Same script type for both outputs and inputs, so script_type_match won't fire
+        let result = analyze_change_detection(&tx, &[ScriptType::P2WPKH], &[11_234_567]);
+        // Should detect via round_number method since one round + one non-round
+        assert!(result.detected);
+        assert_eq!(result.likely_change_index, Some(1)); // non-round is change
+        assert_eq!(result.method, "round_number");
+    }
+
+    // ── CoinJoin Detection ──────────────────────────────────────────────
+
+    #[test]
+    fn coinjoin_not_detected_few_inputs() {
+        let tx = make_tx(2, vec![
+            TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let result = analyze_coinjoin(&tx);
+        assert!(!result.detected);
+    }
+
+    #[test]
+    fn coinjoin_detected() {
+        // 5 inputs, 5 equal-value outputs
+        let tx = make_tx(5, vec![
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let result = analyze_coinjoin(&tx);
+        assert!(result.detected);
+        assert_eq!(result.equal_output_count, 5);
+        assert_eq!(result.equal_output_value, Some(100000));
+    }
+
+    #[test]
+    fn coinjoin_not_detected_diverse_outputs() {
+        let tx = make_tx(4, vec![
+            TxOutput { value: 10000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 20000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 30000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 40000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let result = analyze_coinjoin(&tx);
+        assert!(!result.detected);
+    }
+
+    // ── Consolidation Detection ─────────────────────────────────────────
+
+    #[test]
+    fn consolidation_detected_many_inputs_one_output() {
+        let tx = make_tx(5, vec![
+            TxOutput { value: 250000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let prevouts = vec![ScriptType::P2WPKH; 5];
+        let result = analyze_consolidation(&tx, &prevouts);
+        assert!(result.detected);
+    }
+
+    #[test]
+    fn consolidation_not_detected_few_inputs() {
+        let tx = make_tx(2, vec![
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let prevouts = vec![ScriptType::P2WPKH; 2];
+        let result = analyze_consolidation(&tx, &prevouts);
+        assert!(!result.detected);
+    }
+
+    #[test]
+    fn consolidation_not_detected_many_outputs() {
+        let tx = make_tx(5, vec![
+            TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let prevouts = vec![ScriptType::P2WPKH; 5];
+        let result = analyze_consolidation(&tx, &prevouts);
+        assert!(!result.detected); // 3 outputs > 2
+    }
+
+    // ── Round Number Payment ────────────────────────────────────────────
+
+    #[test]
+    fn round_number_payment_detected() {
+        let tx = make_tx(1, vec![
+            TxOutput { value: 10_000_000, script_pubkey: make_p2wpkh_script() }, // 0.1 BTC
+            TxOutput { value: 1_234_567, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let result = analyze_round_number(&tx);
+        assert!(result.detected);
+        assert_eq!(result.round_output_indices, vec![0]);
+    }
+
+    #[test]
+    fn round_number_payment_not_detected() {
+        let tx = make_tx(1, vec![
+            TxOutput { value: 1_234_567, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 7_654_321, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let result = analyze_round_number(&tx);
+        assert!(!result.detected);
+    }
+
+    // ── Address Reuse ───────────────────────────────────────────────────
+
+    #[test]
+    fn address_reuse_detected() {
+        let script = make_p2wpkh_script();
+        let tx = make_tx(1, vec![
+            TxOutput { value: 50000, script_pubkey: script.clone() },
+        ]);
+        let prevout_scripts_raw = vec![script];
+        let result = analyze_address_reuse(&tx, &prevout_scripts_raw);
+        assert!(result.detected);
+    }
+
+    #[test]
+    fn address_reuse_not_detected_different_scripts() {
+        let tx = make_tx(1, vec![
+            TxOutput { value: 50000, script_pubkey: make_p2tr_script() },
+        ]);
+        let prevout_scripts_raw = vec![make_p2wpkh_script()];
+        let result = analyze_address_reuse(&tx, &prevout_scripts_raw);
+        assert!(!result.detected);
+    }
+
+    #[test]
+    fn address_reuse_skips_non_wallet_types() {
+        // P2SH should be skipped
+        let mut p2sh = vec![0xA9, 0x14];
+        p2sh.extend_from_slice(&[0xDD; 20]);
+        p2sh.push(0x87);
+        let tx = make_tx(1, vec![
+            TxOutput { value: 50000, script_pubkey: p2sh.clone() },
+        ]);
+        let prevout_scripts_raw = vec![p2sh];
+        let result = analyze_address_reuse(&tx, &prevout_scripts_raw);
+        assert!(!result.detected); // P2SH is filtered out
+    }
+
+    // ── Self-Transfer Detection ─────────────────────────────────────────
+
+    #[test]
+    fn self_transfer_detected_with_address_reuse() {
+        let script = make_p2wpkh_script();
+        let tx = make_tx(1, vec![
+            TxOutput { value: 50000, script_pubkey: script.clone() },
+        ]);
+        let prevouts = vec![ScriptType::P2WPKH];
+        let addr_reuse = AddressReuseResult { detected: true };
+        let result = analyze_self_transfer(&tx, &prevouts, &addr_reuse);
+        assert!(result.detected);
+    }
+
+    #[test]
+    fn self_transfer_not_detected_without_reuse() {
+        let tx = make_tx(1, vec![
+            TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 40000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let prevouts = vec![ScriptType::P2WPKH];
+        let addr_reuse = AddressReuseResult { detected: false };
+        let result = analyze_self_transfer(&tx, &prevouts, &addr_reuse);
+        assert!(!result.detected); // 2 outputs + no address reuse
+    }
+
+    #[test]
+    fn self_transfer_detected_single_output() {
+        let tx = make_tx(1, vec![
+            TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let prevouts = vec![ScriptType::P2WPKH];
+        let addr_reuse = AddressReuseResult { detected: false };
+        let result = analyze_self_transfer(&tx, &prevouts, &addr_reuse);
+        assert!(result.detected); // single output = self transfer
+    }
+
+    #[test]
+    fn self_transfer_not_detected_different_output_type() {
+        let tx = make_tx(1, vec![
+            TxOutput { value: 50000, script_pubkey: make_p2tr_script() },
+        ]);
+        let prevouts = vec![ScriptType::P2WPKH];
+        let addr_reuse = AddressReuseResult { detected: true };
+        let result = analyze_self_transfer(&tx, &prevouts, &addr_reuse);
+        assert!(!result.detected); // output type != input type
+    }
+
+    // ── Classification ──────────────────────────────────────────────────
+
+    fn make_heuristics(
+        cioh: bool, change: bool, coinjoin: bool,
+        consolidation: bool, self_transfer: bool,
+    ) -> HeuristicResults {
+        HeuristicResults {
+            cioh: CiohResult { detected: cioh },
+            change_detection: ChangeDetectionResult {
+                detected: change,
+                likely_change_index: if change { Some(1) } else { None },
+                method: "test".to_string(),
+                confidence: "high".to_string(),
+            },
+            coinjoin: CoinjoinResult { detected: coinjoin, equal_output_count: 0, equal_output_value: None },
+            consolidation: ConsolidationResult { detected: consolidation },
+            round_number: RoundNumberResult { detected: false, round_output_indices: vec![] },
+            address_reuse: AddressReuseResult { detected: false },
+            self_transfer: SelfTransferResult { detected: self_transfer },
+        }
+    }
+
+    #[test]
+    fn classify_coinbase_as_unknown() {
+        let tx = make_coinbase_tx();
+        let h = make_heuristics(false, false, false, false, false);
+        assert_eq!(classify_transaction(&tx, &h), TxClassification::Unknown);
+    }
+
+    #[test]
+    fn classify_coinjoin_highest_priority() {
+        let tx = make_tx(5, vec![
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let h = make_heuristics(true, true, true, true, false);
+        assert_eq!(classify_transaction(&tx, &h), TxClassification::Coinjoin);
+    }
+
+    #[test]
+    fn classify_consolidation() {
+        let tx = make_tx(5, vec![
+            TxOutput { value: 250000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let h = make_heuristics(true, false, false, true, false);
+        assert_eq!(classify_transaction(&tx, &h), TxClassification::Consolidation);
+    }
+
+    #[test]
+    fn classify_self_transfer_no_change() {
+        let tx = make_tx(1, vec![
+            TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let h = make_heuristics(false, false, false, false, true);
+        assert_eq!(classify_transaction(&tx, &h), TxClassification::SelfTransfer);
+    }
+
+    #[test]
+    fn classify_self_transfer_with_change_becomes_simple() {
+        // Self-transfer + change_detection → NOT self_transfer classification
+        let tx = make_tx(1, vec![
+            TxOutput { value: 50000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 10000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let h = make_heuristics(false, true, false, false, true);
+        assert_eq!(classify_transaction(&tx, &h), TxClassification::SimplePayment);
+    }
+
+    #[test]
+    fn classify_batch_payment() {
+        let tx = make_tx(1, vec![
+            TxOutput { value: 10000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 20000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 30000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let h = make_heuristics(false, false, false, false, false);
+        assert_eq!(classify_transaction(&tx, &h), TxClassification::BatchPayment);
+    }
+
+    #[test]
+    fn classify_simple_payment() {
+        let tx = make_tx(1, vec![
+            TxOutput { value: 40000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 10000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let h = make_heuristics(false, true, false, false, false);
+        assert_eq!(classify_transaction(&tx, &h), TxClassification::SimplePayment);
+    }
+
+    // ── TxClassification::as_str ────────────────────────────────────────
+
+    #[test]
+    fn classification_as_str() {
+        assert_eq!(TxClassification::SimplePayment.as_str(), "simple_payment");
+        assert_eq!(TxClassification::Consolidation.as_str(), "consolidation");
+        assert_eq!(TxClassification::Coinjoin.as_str(), "coinjoin");
+        assert_eq!(TxClassification::SelfTransfer.as_str(), "self_transfer");
+        assert_eq!(TxClassification::BatchPayment.as_str(), "batch_payment");
+        assert_eq!(TxClassification::Unknown.as_str(), "unknown");
+    }
+
+    // ── Full Block Analysis ─────────────────────────────────────────────
+
+    #[test]
+    fn analyze_block_empty() {
+        let block = Block {
+            header: BlockHeader {
+                version: 1,
+                prev_block_hash: [0u8; 32],
+                merkle_root: [0u8; 32],
+                timestamp: 1700000000,
+                bits: 0,
+                nonce: 0,
+                block_hash: [0xAB; 32],
+            },
+            transactions: vec![],
+        };
+        let result = analyze_block(&block, None);
+        assert_eq!(result.tx_count, 0);
+        assert_eq!(result.flagged_count, 0);
+        assert!(result.tx_analyses.is_empty());
+    }
+
+    #[test]
+    fn analyze_block_coinbase_only() {
+        let block = Block {
+            header: BlockHeader {
+                version: 1,
+                prev_block_hash: [0u8; 32],
+                merkle_root: [0u8; 32],
+                timestamp: 1700000000,
+                bits: 0,
+                nonce: 0,
+                block_hash: [0xAB; 32],
+            },
+            transactions: vec![make_coinbase_tx()],
+        };
+        let result = analyze_block(&block, None);
+        assert_eq!(result.tx_count, 1);
+        assert_eq!(result.flagged_count, 0);
+        assert_eq!(result.tx_analyses[0].classification, TxClassification::Unknown);
+    }
+
+    #[test]
+    fn analyze_block_coinjoin_disables_cioh() {
+        // A CoinJoin tx has many inputs — normally CIOH would fire,
+        // but the code should disable CIOH when CoinJoin is detected
+        let tx = make_tx(5, vec![
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+            TxOutput { value: 100000, script_pubkey: make_p2wpkh_script() },
+        ]);
+        let block = Block {
+            header: BlockHeader {
+                version: 1,
+                prev_block_hash: [0u8; 32],
+                merkle_root: [0u8; 32],
+                timestamp: 1700000000,
+                bits: 0,
+                nonce: 0,
+                block_hash: [0xAB; 32],
+            },
+            transactions: vec![make_coinbase_tx(), tx],
+        };
+        let undo = BlockUndo {
+            tx_undos: vec![TxUndo {
+                prevouts: (0..5).map(|_| PrevOut {
+                    value: 100500,
+                    script_pubkey: make_p2wpkh_script(),
+                    height: 800000,
+                    coinbase: false,
+                }).collect(),
+            }],
+        };
+        let result = analyze_block(&block, Some(&undo));
+        // tx_analyses[0] is coinbase, [1] is the coinjoin tx
+        let cj_analysis = &result.tx_analyses[1];
+        assert!(cj_analysis.heuristics.coinjoin.detected);
+        assert!(!cj_analysis.heuristics.cioh.detected); // CIOH disabled for CoinJoin
+        assert_eq!(cj_analysis.classification, TxClassification::Coinjoin);
+    }
+}

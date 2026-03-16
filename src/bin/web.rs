@@ -120,6 +120,8 @@ body{font-family:var(--mono);background:var(--bg);color:var(--text-secondary);li
 .topbar .spacer{flex:1}
 .topbar select{background:#1e1e1e;border:1px solid #333;color:#fff;padding:7px 14px;font-family:var(--mono);font-size:11px;cursor:pointer;outline:none;border-radius:var(--radius)}
 .topbar select:hover{border-color:#555}
+.upload-btn{background:transparent;border:1px solid #555;color:#fff;padding:7px 14px;font-family:var(--mono);font-size:11px;cursor:pointer;border-radius:var(--radius);transition:all .15s;letter-spacing:.5px}
+.upload-btn:hover{background:#fff;color:#111;border-color:#fff}
 .topbar .status{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#888}
 .topbar .status b{color:#5dff94}
 
@@ -232,6 +234,9 @@ body{font-family:var(--mono);background:var(--bg);color:var(--text-secondary);li
 .chk.n{color:#ddd}
 .tx-row.selected .chk.y{color:#fff}
 .tx-row.selected .chk.n{color:#333}
+.tx-flag-hint{font-size:9px;color:#999;padding:2px 0 0 44px;line-height:1.4;letter-spacing:.3px}
+.tx-row.selected .tx-flag-hint{color:#666}
+.tx-row:hover .tx-flag-hint{color:#666}
 
 /* PAGINATION */
 .pager{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-top:1px solid var(--border);background:var(--surface)}
@@ -276,6 +281,20 @@ body{font-family:var(--mono);background:var(--bg);color:var(--text-secondary);li
 .conf-pip{width:18px;height:4px;border-radius:1px;background:#e0ddd6}
 .conf-pip.filled{background:#111}
 
+/* Flagging Analysis */
+.flag-section{background:#faf8f3}
+.flag-summary{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding:10px 14px;background:#111;border-radius:var(--radius)}
+.flag-count{font-size:11px;color:#aaa;font-weight:500}
+.flag-verdict{font-size:9px;letter-spacing:3px;font-weight:800;color:#ff6b6b;text-transform:uppercase}
+.flag-reason{border:1px solid var(--border);padding:12px 14px;margin-bottom:8px;border-radius:var(--radius);border-left:3px solid #111}
+.flag-reason-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.flag-reason-id{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-primary)}
+.flag-reason-short{font-size:9px;color:var(--text-muted);font-style:italic}
+.flag-reason-why{font-size:10px;color:var(--text-secondary);line-height:1.6}
+.flag-reason-data{font-size:9px;color:var(--text-muted);margin-top:6px;padding-top:6px;border-top:1px solid var(--border)}
+.flag-reason-data code{background:#e8e5de;padding:1px 5px;color:#444;font-size:9px;border-radius:1px}
+.flag-clean{font-size:10px;color:var(--text-muted);padding:12px 0;line-height:1.6}
+
 /* Empty state */
 .empty-panel{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;color:var(--text-faint);text-align:center}
 .empty-panel .ep-icon{font-size:32px;margin-bottom:12px;opacity:.3}
@@ -303,6 +322,8 @@ body{font-family:var(--mono);background:var(--bg);color:var(--text-secondary);li
   <span class="sub">Bitcoin Chain Analysis</span>
   <span class="spacer"></span>
   <select id="fileSelect" onchange="loadFile(this.value)"></select>
+  <input type="file" id="fileUpload" accept=".json" style="display:none" onchange="handleUpload(this)">
+  <button class="upload-btn" onclick="document.getElementById('fileUpload').click()">&#8593; Upload JSON</button>
   <span class="status">Status: <b id="statusTxt">LOADING</b></span>
 </header>
 <div class="layout">
@@ -314,6 +335,23 @@ body{font-family:var(--mono);background:var(--bg);color:var(--text-secondary);li
 
 <script>
 const PAGE_SIZE=50;
+const FLAG_REASONS={
+  cioh:{short:'Multiple inputs spent together',why:'All inputs in this transaction are likely controlled by the same wallet entity. This is the foundational chain analysis assumption — spending multiple UTXOs together links them to one owner.'},
+  change_detection:{short:'Change output identified',why:'One output likely returns funds to the sender. Detected via script type matching, round-number analysis, or value heuristics. This reveals which output is the payment vs. the change.'},
+  coinjoin:{short:'CoinJoin mixing detected',why:'Multiple participants combined inputs with equal-value outputs to obscure the transaction graph. High input count + symmetric output values indicate coordinated privacy mixing.'},
+  consolidation:{short:'UTXO consolidation',why:'Many inputs swept into 1-2 outputs of the same script type. This is wallet maintenance — reducing the UTXO set size, typically done during low-fee periods.'},
+  address_reuse:{short:'Address reused across I/O',why:'The same address appears in both inputs and outputs (or across transactions in this block). Address reuse significantly weakens privacy by linking transactions to the same entity.'},
+  self_transfer:{short:'Self-transfer (same entity)',why:'All inputs and outputs use the same script type with no obvious payment component. Likely the owner moving funds between their own addresses.'},
+  round_number_payment:{short:'Round BTC amount detected',why:'An output has a round BTC value (e.g. 0.1, 0.01, 1.0 BTC). Round amounts are more likely payments to others; non-round amounts are more likely change returned to the sender.'}
+};
+
+function getFlagReasons(tx){
+  if(!tx.heuristics)return[];
+  return Object.entries(tx.heuristics)
+    .filter(([_,v])=>v.detected)
+    .map(([id,v])=>({id,data:v,...(FLAG_REASONS[id]||{short:id,why:'Heuristic fired.'})}));
+}
+
 const HEUR_META=[
   {id:'cioh',full:'Common Input Ownership',confidence:'high',conf_level:3,desc:'All inputs likely controlled by same entity — foundational chain analysis assumption.'},
   {id:'change_detection',full:'Change Output Detection',confidence:'high',conf_level:3,desc:'Identifies likely change output via script type match, round-number, and value analysis.'},
@@ -508,6 +546,10 @@ function renderTxSection(){
     h+=`<span class="chk ${chg?'y':'n'}">${chg?'\u2713':'\u2014'}</span>`;
     h+=`<span class="chk ${cj?'y':'n'}">${cj?'\u2713':'\u2014'}</span>`;
     h+=`<span class="chk ${con?'y':'n'}">${con?'\u2713':'\u2014'}</span>`;
+    if(det){
+      const reasons=getFlagReasons(tx);
+      h+=`<span class="tx-flag-hint" style="grid-column:1/-1">${reasons.map(r=>r.short).join(' · ')}</span>`;
+    }
     h+=`</div>`;
   });
   h+=`</div>`;
@@ -562,8 +604,29 @@ function renderDetailPanel(){
       h+=`<text x="255" y="${svgH-2}" font-size="7" fill="#bbb" font-family="var(--mono)">${outCount} outputs</text>`;
       h+=`</svg></div>`;
 
+      // Flagging Analysis section
+      const reasons=getFlagReasons(tx);
+      if(reasons.length>0){
+        h+=`<div class="dp-section flag-section"><div class="dp-label">Flagging Analysis</div>`;
+        h+=`<div class="flag-summary"><span class="flag-count">${reasons.length} heuristic${reasons.length>1?'s':''} triggered</span>`;
+        h+=`<span class="flag-verdict">FLAGGED</span></div>`;
+        reasons.forEach(r=>{
+          h+=`<div class="flag-reason">`;
+          h+=`<div class="flag-reason-hdr"><span class="flag-reason-id">${r.id.replace(/_/g,' ')}</span><span class="flag-reason-short">${r.short}</span></div>`;
+          h+=`<div class="flag-reason-why">${r.why}</div>`;
+          if(r.id==='change_detection'&&r.data.method){
+            h+=`<div class="flag-reason-data">Method: <code>${r.data.method}</code> · Change index: <code>${r.data.likely_change_index}</code> · Confidence: <code>${r.data.confidence}</code></div>`;
+          }
+          h+=`</div>`;
+        });
+        h+=`</div>`;
+      }else{
+        h+=`<div class="dp-section"><div class="dp-label">Flagging Analysis</div>`;
+        h+=`<div class="flag-clean">No heuristics triggered — transaction appears normal.</div></div>`;
+      }
+
       // Heuristic results
-      h+=`<div class="dp-section"><div class="dp-label">Heuristic Results</div>`;
+      h+=`<div class="dp-section"><div class="dp-label">All Heuristic Results</div>`;
       HEUR_META.forEach(m=>{
         const hr=tx.heuristics?tx.heuristics[m.id]:null;
         const det=hr&&hr.detected;
@@ -673,6 +736,32 @@ function toggleHeuristic(id,card){
   else{activeHeuristic=id}
   currentPage=1;selectedTxid=null;
   renderAll();
+}
+
+function handleUpload(input){
+  const file=input.files[0];
+  if(!file)return;
+  document.getElementById('statusTxt').textContent='READING';
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      data=JSON.parse(e.target.result);
+      const name=file.name.replace(/\.json$/,'');
+      // Add to dropdown if not already there
+      const sel=document.getElementById('fileSelect');
+      let found=false;
+      for(let i=0;i<sel.options.length;i++){if(sel.options[i].value===name){found=true;sel.value=name;break;}}
+      if(!found){const o=document.createElement('option');o.value=name;o.textContent=name+' (uploaded)';sel.appendChild(o);sel.value=name;}
+      currentBlock=0;activeFilter='all';selectedTxid=null;activeHeuristic=null;currentPage=1;
+      document.getElementById('statusTxt').textContent='LOADED';
+      renderAll();
+    }catch(err){
+      alert('Invalid JSON file: '+err.message);
+      document.getElementById('statusTxt').textContent='ERROR';
+    }
+  };
+  reader.readAsText(file);
+  input.value='';
 }
 
 init();
