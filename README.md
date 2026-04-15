@@ -1,16 +1,14 @@
 
 
 <p align="center">
+ <img width="952" height="309" alt="image" src="https://github.com/user-attachments/assets/e041e322-10e4-4e9f-8140-5e79d24e841a" />
+
+
   <img src="https://img.shields.io/badge/₿-Bitcoin-F7931A?style=for-the-badge&logo=bitcoin&logoColor=white" />
   <img src="https://img.shields.io/badge/Protocol_Level-FF6B00?style=for-the-badge" />
 </p>
 
-<h1 align="center">Summer of Bitcoin 2026</h1>
-<p align="center"><em>Three Bitcoin Development Challenges</em></p>
 
-<p align="center">
-  <code>Transaction Parser</code> · <code>PSBT Builder</code> · <code>Chain Analysis</code>
-</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Rust-000000?style=flat-square&logo=rust&logoColor=white" />
@@ -27,9 +25,9 @@
 
 ---
 
-Three Bitcoin development challenges completed as part of [Summer of Bitcoin](https://www.summerofbitcoin.org/) 2026 — a global open-source program that selects developers through protocol-level coding challenges before matching them with Bitcoin projects for a paid internship.
+Three Bitcoin development challenges completed as part of [Summer of Bitcoin](https://www.summerofbitcoin.org/) 2026 a global open-source program that selects developers through protocol-level coding challenges before matching them with Bitcoin projects for a paid internship.
 
-Each challenge was built from a specification: core logic as a CLI, comprehensive tests, and a web visualizer. All three are written entirely in **Rust** with embedded single-page web UIs — no npm, no bundler, just `cargo build`.
+Each challenge was built from a specification: core logic as a CLI, comprehensive tests, and a web visualizer. All three are written entirely in **Rust** with embedded single-page web UIs  no npm, no bundler, just `cargo build`.
 
 ---
 
