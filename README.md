@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="./assets/banner.png" alt="Summer of Bitcoin 2026 Banner" width="100%" />
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/₿-Bitcoin-F7931A?style=for-the-badge&logo=bitcoin&logoColor=white" />
   <img src="https://img.shields.io/badge/Protocol_Level-FF6B00?style=for-the-badge" />
 </p>
