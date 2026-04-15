@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chain Lens — Bitcoin Transaction Visualizer</title>
+    <style>
+        *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+        :root {
+            --bg:        #fff;
+            --bg-1:      #f5f5f5;
+            --bg-2:      #ebebeb;
+            --bg-3:      #e0e0e0;
+            --border:    #e0e0e0;
+            --border-hi: #bbb;
+            --text:      #000;
+            --text-2:    #444;
+            --text-3:    #999;
+            --danger:    #cc2200;
+            --warn:      #a07000;
+            --success:   #1a8a3a;
+            --fee-col:   #cc2200;
+            --mono: 'SF Mono','Fira Code','Cascadia Code','Consolas',monospace;
+            --sans: -apple-system,BlinkMacSystemFont,'Inter','Segoe UI',system-ui,sans-serif;
+        }
+
+        html, body { height:100%; background:var(--bg); color:var(--text);
+            font-family:var(--sans); font-size:14px; line-height:1.6;
+            -webkit-font-smoothing:antialiased; }
+
+        /* ── App shell ───────────────────────────────────────── */
+        .app { display:grid; grid-template-rows:52px 1fr; min-height:100vh; }
+
+        .topbar { display:flex; align-items:center; padding:0 24px;
+            border-bottom:1px solid var(--border); background:var(--bg);
+            position:sticky; top:0; z-index:100; gap:16px; }
+
+        .logo { font-size:14px; font-weight:700; letter-spacing:.1em;
+            text-transform:uppercase; color:var(--text); margin-right:auto; }
+        .logo em { color:var(--text-3); font-style:normal; font-weight:400; }
+
+        .mode-tabs { display:flex; gap:2px; background:var(--bg-2);
+            border:1px solid var(--border-hi); border-radius:6px; padding:3px; }
+        .mode-tab { padding:4px 16px; border-radius:4px; border:none;
+            background:transparent; color:var(--text-3); font-family:var(--sans);
+            font-size:12px; font-weight:500; cursor:pointer; transition:.15s; }
+        .mode-tab:hover { color:var(--text-2); }
+        .mode-tab.active { background:var(--bg-3); color:var(--text);
+            border:1px solid var(--border-hi); }
+
+        /* ── Main split ──────────────────────────────────────── */
+        .main { display:grid; grid-template-columns:360px 1fr;
+            height:calc(100vh - 52px); overflow:hidden; }
+
+        /* ── Left panel ──────────────────────────────────────── */
+        .panel-in { border-right:1px solid var(--border); display:flex;
+            flex-direction:column; background:var(--bg-1); overflow:hidden; }
+
+        .p-head { padding:18px 20px 14px; border-bottom:1px solid var(--border); flex-shrink:0; }
+        .p-label { font-size:10px; font-weight:700; letter-spacing:.12em;
+            text-transform:uppercase; color:var(--text-3); margin-bottom:3px; }
+        .p-sub { font-size:12px; color:var(--text-3); }
+
+        .p-body { flex:1; overflow-y:auto; padding:18px 20px; display:flex;
+            flex-direction:column; gap:14px; }
+        .p-body::-webkit-scrollbar { width:3px; }
+        .p-body::-webkit-scrollbar-thumb { background:var(--border-hi); border-radius:2px; }
+
+        .field-lbl { display:block; font-size:10px; font-weight:700;
+            letter-spacing:.1em; text-transform:uppercase; color:var(--text-3); margin-bottom:6px; }
+
+        textarea { width:100%; background:var(--bg-2); border:1px solid var(--border);
+            border-radius:6px; color:var(--text); font-family:var(--mono); font-size:11px;
+            line-height:1.6; padding:10px 12px; resize:vertical; min-height:160px;
+            outline:none; transition:border-color .15s; }
+        textarea:focus { border-color:var(--border-hi); }
+        textarea::placeholder { color:var(--text-3); }
+
+        .btn { width:100%; padding:10px 20px; background:var(--text); color:var(--bg);
+            border:none; border-radius:6px; font-family:var(--sans); font-size:13px;
+            font-weight:700; cursor:pointer; transition:opacity .15s; letter-spacing:.01em; }
+        .btn:hover { opacity:.85; }
+        .btn:active { opacity:.7; }
+
+        /* file rows */
+        .file-grid { display:flex; flex-direction:column; gap:8px; }
+        .file-row { display:grid; grid-template-columns:74px 1fr 60px;
+            align-items:center; gap:10px; background:var(--bg-2);
+            border:1px solid var(--border); border-radius:6px; padding:9px 12px;
+            transition:border-color .15s; }
+        .file-row:hover { border-color:var(--border-hi); }
+        .file-row.done { border-color:rgba(48,209,88,.4); }
+        .file-type { font-family:var(--mono); font-size:11px; color:var(--text-3); font-weight:600; }
+        .file-inp-wrap { position:relative; overflow:hidden; }
+        .file-inp-wrap input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; }
+        .file-btn-lbl { display:block; padding:4px 8px; background:var(--bg-3);
+            border:1px solid var(--border-hi); border-radius:4px; font-size:11px;
+            color:var(--text-2); text-align:center; cursor:pointer; }
+        .file-ok { font-size:11px; color:var(--success); text-align:right; }
+        .file-pending { font-size:11px; color:var(--text-3); text-align:right; }
+
+        /* ── Right panel ─────────────────────────────────────── */
+        .panel-out { overflow-y:auto; background:var(--bg); }
+        .panel-out::-webkit-scrollbar { width:3px; }
+        .panel-out::-webkit-scrollbar-thumb { background:var(--border-hi); border-radius:2px; }
+
+        .empty-state { display:flex; flex-direction:column; align-items:center;
+            justify-content:center; height:100%; gap:10px; }
+        .empty-icon { font-size:36px; opacity:.15; }
+        .empty-h { font-size:14px; color:var(--text-3); }
+        .empty-p { font-size:12px; color:var(--text-3); opacity:.6; }
+
+        /* ── Result layout ───────────────────────────────────── */
+        .result { padding:24px 32px; display:flex; flex-direction:column; gap:16px; }
+
+        /* ── Card ────────────────────────────────────────────── */
+        .card { border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+        .card-head { display:flex; align-items:center; justify-content:space-between;
+            padding:11px 18px; border-bottom:1px solid var(--border); background:var(--bg-1); }
+        .card-title { font-size:10px; font-weight:700; letter-spacing:.12em;
+            text-transform:uppercase; color:var(--text-3); }
+        .card-body { padding:18px; background:var(--bg); }
+
+        /* ── Story card ──────────────────────────────────────── */
+        .story-body { padding:20px 22px; background:var(--bg); }
+        .story-lead { font-size:17px; font-weight:600; color:var(--text);
+            line-height:1.5; margin-bottom:12px; }
+        .story-para { font-size:13px; color:var(--text-2); line-height:1.7; margin-bottom:8px; }
+        .story-para:last-child { margin-bottom:0; }
+        .story-para strong { color:var(--text); }
+        .badges { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+
+        /* ── Badges ──────────────────────────────────────────── */
+        .badge { display:inline-flex; align-items:center; gap:4px; padding:3px 9px;
+            border-radius:4px; font-size:11px; font-weight:600; letter-spacing:.03em;
+            text-transform:uppercase; }
+        .b-outline { border:1px solid var(--border-hi); color:var(--text-2); }
+        .b-white  { background:var(--text); color:var(--bg); }
+        .b-warn   { background:rgba(230,180,0,.1); border:1px solid rgba(230,180,0,.3); color:var(--warn); }
+        .b-danger { background:rgba(255,82,82,.08); border:1px solid rgba(255,82,82,.25); color:var(--danger); }
+        .b-success{ background:rgba(48,209,88,.08); border:1px solid rgba(48,209,88,.25); color:var(--success); }
+
+        /* ── KV grid ─────────────────────────────────────────── */
+        .kv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+            gap:1px; background:var(--border); border-radius:6px; overflow:hidden; }
+        .kv { background:var(--bg-1); padding:13px 15px; }
+        .kv-k { font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase;
+            color:var(--text-3); margin-bottom:4px; }
+        .kv-v { font-size:15px; font-weight:600; color:var(--text); font-variant-numeric:tabular-nums; }
+        .kv-v.sm { font-size:12px; }
+        .kv-v.mono { font-family:var(--mono); font-size:11px; font-weight:400; word-break:break-all; }
+
+        /* ── Tooltip ─────────────────────────────────────────── */
+        .tip { position:relative; border-bottom:1px dotted var(--border-hi); cursor:help; }
+        .tip::after { content:attr(data-tip); position:absolute; bottom:calc(100% + 6px);
+            left:50%; transform:translateX(-50%); background:var(--bg-3);
+            border:1px solid var(--border-hi); color:var(--text-2); padding:6px 10px;
+            border-radius:5px; white-space:nowrap; font-size:11px; pointer-events:none;
+            opacity:0; transition:opacity .15s; z-index:999; max-width:260px;
+            white-space:normal; text-align:center; line-height:1.4; width:max-content; }
+        .tip:hover::after { opacity:1; }
+
+        /* ── Flow diagram ────────────────────────────────────── */
+        .flow-wrap { overflow-x:auto; background:var(--bg-1);
+            border-radius:6px; padding:16px; }
+
+        /* ── Fee bar ─────────────────────────────────────────── */
+        .fee-bar-wrap { margin-top:14px; }
+        .fee-bar-label { font-size:11px; color:var(--text-3); margin-bottom:6px; }
+        .fee-bar { display:flex; height:24px; border-radius:4px; overflow:hidden;
+            border:1px solid var(--border-hi); }
+        .fee-bar-out { background:var(--bg-3); display:flex; align-items:center;
+            padding:0 8px; font-size:10px; font-weight:700; color:var(--text-2);
+            white-space:nowrap; overflow:hidden; }
+        .fee-bar-fee { background:rgba(255,82,82,.18); border-left:1px solid rgba(255,82,82,.3);
+            display:flex; align-items:center; padding:0 8px; font-size:10px;
+            font-weight:700; color:var(--fee-col); white-space:nowrap; flex-shrink:0; }
+
+        /* ── IO tables ───────────────────────────────────────── */
+        .io-table { width:100%; border-collapse:collapse; }
+        .io-table th { text-align:left; font-size:10px; font-weight:700;
+            letter-spacing:.1em; text-transform:uppercase; color:var(--text-3);
+            padding:8px 12px; border-bottom:1px solid var(--border); }
+        .io-table td { padding:10px 12px; border-bottom:1px solid var(--border);
+            font-size:13px; vertical-align:middle; }
+        .io-table tr:last-child td { border-bottom:none; }
+        .io-table tr:hover td { background:var(--bg-1); }
+        .mono-s { font-family:var(--mono); font-size:11px; color:var(--text-3); word-break:break-all; }
+        .type-pill { display:inline-block; padding:2px 8px; border-radius:3px; font-size:10px;
+            font-weight:700; font-family:var(--mono); letter-spacing:.04em;
+            background:var(--bg-2); border:1px solid var(--border-hi); color:var(--text-2); white-space:nowrap; }
+        .sats { font-variant-numeric:tabular-nums; font-size:13px; white-space:nowrap; }
+
+        /* ── Warnings ────────────────────────────────────────── */
+        .warn-list { display:flex; flex-direction:column; gap:8px; }
+        .warn-item { display:flex; gap:12px; padding:12px 14px; border-radius:6px;
+            border:1px solid rgba(230,180,0,.2); background:rgba(230,180,0,.04); }
+        .warn-dot { width:6px; height:6px; border-radius:50%; background:var(--warn);
+            flex-shrink:0; margin-top:6px; }
+        .warn-code { font-family:var(--mono); font-size:11px; font-weight:700;
+            color:var(--warn); letter-spacing:.06em; }
+        .warn-plain { font-size:13px; color:var(--text-2); margin-top:2px; }
+        .warn-tech { font-size:11px; color:var(--text-3); margin-top:3px; }
+
+        /* ── Collapsible tech details ─────────────────────────── */
+        .tech-toggle { display:flex; align-items:center; gap:7px; cursor:pointer; user-select:none; }
+        .tech-toggle:hover .tech-lbl { color:var(--text-2); }
+        .tech-lbl { font-size:12px; color:var(--text-3); transition:color .15s; }
+        .tech-arr { font-size:10px; color:var(--text-3); transition:transform .2s; display:inline-block; }
+        .tech-arr.open { transform:rotate(90deg); }
+        .tech-body { display:none; margin-top:14px; }
+        .tech-body.show { display:block; }
+        .json-pre { background:var(--bg-1); border:1px solid var(--border);
+            border-radius:6px; padding:14px 16px; overflow-x:auto; }
+        .json-pre pre { font-family:var(--mono); font-size:11px; line-height:1.7;
+            color:var(--text-3); white-space:pre; }
+        .hex-val { font-family:var(--mono); font-size:11px; color:var(--text-3);
+            word-break:break-all; padding:8px 10px; background:var(--bg-1);
+            border:1px solid var(--border); border-radius:4px; margin-top:6px; }
+
+        /* ── Error ───────────────────────────────────────────── */
+        .err-box { border:1px solid rgba(255,82,82,.25); background:rgba(255,82,82,.04);
+            border-radius:8px; padding:18px; }
+        .err-code { font-family:var(--mono); font-size:11px; font-weight:700;
+            color:var(--danger); letter-spacing:.1em; text-transform:uppercase; margin-bottom:6px; }
+        .err-msg { font-size:13px; color:var(--text-2); }
+
+        /* ── Loading ─────────────────────────────────────────── */
+        .loading { display:flex; align-items:center; justify-content:center;
+            padding:60px; color:var(--text-3); font-size:13px; gap:10px; }
+        .spinner { width:15px; height:15px; border:2px solid var(--border-hi);
+            border-top-color:var(--text); border-radius:50%; animation:spin .7s linear infinite; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+
+        /* ── Block TX list ───────────────────────────────────── */
+        .tx-list { display:flex; flex-direction:column; }
+        .tx-row { border-bottom:1px solid var(--border); }
+        .tx-row:last-child { border-bottom:none; }
+        .tx-sum { display:grid; grid-template-columns:32px 1fr auto auto;
+            align-items:center; gap:12px; padding:10px 16px; cursor:pointer; transition:.1s; }
+        .tx-sum:hover { background:var(--bg-1); }
+        .tx-idx { font-size:11px; color:var(--text-3); font-variant-numeric:tabular-nums; text-align:right; }
+        .tx-txid { font-family:var(--mono); font-size:11px; color:var(--text-3);
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .tx-fee-s { font-size:12px; color:var(--text-2); font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .tx-ch { color:var(--text-3); font-size:10px; transition:transform .2s; }
+        .tx-ch.open { transform:rotate(90deg); }
+        .tx-detail { display:none; padding:14px 16px 18px; border-top:1px solid var(--border); background:var(--bg-1); }
+        .tx-detail.show { display:block; }
+
+        /* ── Responsive ──────────────────────────────────────── */
+        @media(max-width:800px) {
+            .main { grid-template-columns:1fr; grid-template-rows:auto 1fr; height:auto; }
+            .panel-in { border-right:none; border-bottom:1px solid var(--border); }
+            .panel-out { min-height:70vh; }
+            .result { padding:16px; }
+        }
+    </style>
+</head>
+<body>
+<div class="app">
+
+<!-- ── Topbar ────────────────────────────────────────────────── -->
+<header class="topbar">
+    <div class="logo">Chain<em>Lens</em></div>
+    <div class="mode-tabs">
+        <button class="mode-tab active" onclick="switchMode('tx')">Transaction</button>
+        <button class="mode-tab" onclick="switchMode('block')">Block</button>
+    </div>
+</header>
+
+<!-- ── Main ──────────────────────────────────────────────────── -->
+<div class="main">
+
+    <!-- Left panel -->
+    <aside class="panel-in">
+
+        <!-- TX input -->
+        <div id="panelTx" style="display:flex;flex-direction:column;height:100%;">
+            <div class="p-head">
+                <div class="p-label">Transaction</div>
+                <div class="p-sub">Paste a fixture JSON to analyze</div>
+            </div>
+            <div class="p-body">
+                <div>
+                    <label class="field-lbl">Fixture JSON</label>
+                    <textarea id="fixtureInput"
+                        placeholder='{"network":"mainnet","raw_tx":"0200...","prevouts":[...]}'></textarea>
+                </div>
+                <button class="btn" onclick="analyzeTx()">Analyze Transaction</button>
+
+                <div style="border-top:1px solid var(--border);padding-top:14px;">
+                    <div class="p-label" style="margin-bottom:10px;">What is this?</div>
+                    <p style="font-size:12px;color:var(--text-3);line-height:1.7;">
+                        Paste the JSON fixture (containing <code style="font-family:var(--mono);font-size:11px;color:var(--text-2);">raw_tx</code>,
+                        <code style="font-family:var(--mono);font-size:11px;color:var(--text-2);">prevouts</code> and
+                        <code style="font-family:var(--mono);font-size:11px;color:var(--text-2);">network</code>).
+                        Chain Lens will decode and explain the transaction in plain English.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Block input -->
+        <div id="panelBlock" style="display:none;flex-direction:column;height:100%;">
+            <div class="p-head">
+                <div class="p-label">Block</div>
+                <div class="p-sub">Upload Bitcoin Core block files</div>
+            </div>
+            <div class="p-body">
+                <div>
+                    <label class="field-lbl">Block Files</label>
+                    <div class="file-grid">
+                        <div class="file-row" id="rowBlk">
+                            <span class="file-type">blk*.dat</span>
+                            <div class="file-inp-wrap">
+                                <span class="file-btn-lbl">Choose</span>
+                                <input type="file" accept=".dat" onchange="handleFile(event,'blk')">
+                            </div>
+                            <span class="file-pending" id="stBlk">—</span>
+                        </div>
+                        <div class="file-row" id="rowRev">
+                            <span class="file-type">rev*.dat</span>
+                            <div class="file-inp-wrap">
+                                <span class="file-btn-lbl">Choose</span>
+                                <input type="file" accept=".dat" onchange="handleFile(event,'rev')">
+                            </div>
+                            <span class="file-pending" id="stRev">—</span>
+                        </div>
+                        <div class="file-row" id="rowXor">
+                            <span class="file-type">xor.dat</span>
+                            <div class="file-inp-wrap">
+                                <span class="file-btn-lbl">Choose</span>
+                                <input type="file" accept=".dat" onchange="handleFile(event,'xor')">
+                            </div>
+                            <span class="file-pending" id="stXor">—</span>
+                        </div>
+                    </div>
+                </div>
+                <button class="btn" onclick="analyzeBlock()">Analyze Block</button>
+                <div style="border-top:1px solid var(--border);padding-top:14px;">
+                    <p style="font-size:12px;color:var(--text-3);line-height:1.7;">
+                        Provide the <code style="font-family:var(--mono);font-size:11px;color:var(--text-2);">blk*.dat</code>,
+                        <code style="font-family:var(--mono);font-size:11px;color:var(--text-2);">rev*.dat</code>, and
+                        <code style="font-family:var(--mono);font-size:11px;color:var(--text-2);">xor.dat</code>
+                        files from your Bitcoin Core data directory to inspect any block.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+    </aside>
+
+    <!-- Right panel -->
+    <main class="panel-out" id="outPanel">
+        <div class="empty-state">
+            <div class="empty-icon">⬡</div>
+            <div class="empty-h">Nothing loaded yet</div>
+            <div class="empty-p">Paste a fixture JSON and click Analyze</div>
+        </div>
+    </main>
+</div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════
+   State & mode
+══════════════════════════════════════════════════════════════ */
+const files = {blk:null, rev:null, xor:null};
+let currentMode = 'tx';
+
+function switchMode(m) {
+    currentMode = m;
+    document.querySelectorAll('.mode-tab').forEach((t,i) =>
+        t.classList.toggle('active', i === (m==='tx'?0:1)));
+    const pt = document.getElementById('panelTx');
+    const pb = document.getElementById('panelBlock');
+    pt.style.display = m==='tx' ? 'flex' : 'none';
+    pb.style.display = m==='block' ? 'flex' : 'none';
+    resetOut();
+}
+
+function resetOut() {
+    document.getElementById('outPanel').innerHTML =
+        `<div class="empty-state">
+            <div class="empty-icon">⬡</div>
+            <div class="empty-h">Nothing loaded yet</div>
+            <div class="empty-p">${currentMode==='tx'
+                ? 'Paste a fixture JSON and click Analyze'
+                : 'Upload block files and click Analyze Block'}</div>
+         </div>`;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   File handling
+══════════════════════════════════════════════════════════════ */
+function handleFile(e, key) {
+    const f = e.target.files[0]; if (!f) return;
+    files[key] = f;
+    const K = key[0].toUpperCase() + key.slice(1);
+    const st  = document.getElementById('st'+K);
+    const row = document.getElementById('row'+K);
+    st.textContent = '✓'; st.className = 'file-ok';
+    row.classList.add('done');
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Analyze transaction
+══════════════════════════════════════════════════════════════ */
+async function analyzeTx() {
+    const raw   = document.getElementById('fixtureInput').value.trim();
+    const panel = document.getElementById('outPanel');
+    if (!raw) { showError(panel,'INPUT_REQUIRED','Paste a fixture JSON first.'); return; }
+
+    let fixture;
+    try { fixture = JSON.parse(raw); }
+    catch(e) { showError(panel,'INVALID_JSON','Could not parse JSON: '+e.message); return; }
+
+    panel.innerHTML = `<div class="loading"><div class="spinner"></div>Analyzing…</div>`;
+
+    try {
+        const res  = await fetch('/api/analyze',{method:'POST',
+            headers:{'Content-Type':'application/json'},body:JSON.stringify(fixture)});
+        const data = await res.json();
+        if (!data.ok) { showError(panel, data.error?.code||'ERROR', data.error?.message||'Unknown error'); return; }
+        renderTx(panel, data);
+    } catch(e) { showError(panel,'NETWORK_ERROR',e.message); }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Analyze block
+══════════════════════════════════════════════════════════════ */
+async function analyzeBlock() {
+    const panel = document.getElementById('outPanel');
+    if (!files.blk||!files.rev||!files.xor) {
+        showError(panel,'FILES_REQUIRED','Select all three files first.'); return; }
+
+    panel.innerHTML = `<div class="loading"><div class="spinner"></div>Parsing block…</div>`;
+
+    try {
+        const fd = new FormData();
+        fd.append('blk',files.blk); fd.append('rev',files.rev); fd.append('xor',files.xor);
+        const res    = await fetch('/api/analyze-block',{method:'POST',body:fd});
+        const blocks = await res.json();
+        if (!Array.isArray(blocks)||!blocks.length) {
+            showError(panel,'NO_BLOCKS','No blocks found.'); return; }
+        renderBlocks(panel, blocks);
+    } catch(e) { showError(panel,'NETWORK_ERROR',e.message); }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Error helper
+══════════════════════════════════════════════════════════════ */
+function showError(panel, code, msg) {
+    panel.innerHTML = `<div class="result">
+        <div class="err-box">
+            <div class="err-code">${x(code)}</div>
+            <div class="err-msg">${x(msg)}</div>
+        </div></div>`;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   RENDER TRANSACTION (story-driven)
+══════════════════════════════════════════════════════════════ */
+function renderTx(panel, tx) {
+    const vin  = tx.vin  || [];
+    const vout = tx.vout || [];
+    const warn = tx.warnings || [];
+
+    panel.innerHTML = '';
+    const wrap = el('div','result');
+    panel.appendChild(wrap);
+
+    /* ── 1. Story: What happened? ── */
+    const nonORouts = vout.filter(o => o.script_type !== 'op_return');
+    const orOuts    = vout.filter(o => o.script_type === 'op_return');
+    const isSegwit  = tx.segwit;
+    const isRBF     = tx.rbf_signaling;
+    const hasLock   = tx.locktime_type !== 'none';
+
+    let storyLead = `A Bitcoin transaction moved
+        <strong>${btc(tx.total_output_sats)} BTC</strong>
+        from ${vin.length} ${vin.length===1?'source':'sources'}
+        to ${nonORouts.length} ${nonORouts.length===1?'recipient':'recipients'}`;
+    if (orOuts.length) storyLead += ` (+ ${orOuts.length} data output${orOuts.length>1?'s':''})`;
+    storyLead += '.';
+
+    let storyParas = [];
+    storyParas.push(
+        `The sender paid a fee of <strong>${fmt(tx.fee_sats)} satoshis</strong> ` +
+        `(${tx.fee_rate_sat_vb?.toFixed(2)} sat/vB) to the Bitcoin miner who confirmed this transaction. ` +
+        `A higher fee rate means faster confirmation.`
+    );
+
+    if (isSegwit) {
+        const s = tx.segwit_savings;
+        storyParas.push(
+            `This is a <span class="tip" data-tip="SegWit (Segregated Witness) is a Bitcoin upgrade that moves signature data out of the main transaction body, reducing its effective size and fees.">SegWit</span> transaction. ` +
+            (s ? `By using SegWit, the sender saved ${s.savings_pct?.toFixed(1)}% in weight — the actual weight is ${s.weight_actual} WU vs ${s.weight_if_legacy} WU it would have been with a legacy format.` : '')
+        );
+    } else {
+        storyParas.push(
+            `This is a <strong>legacy</strong> transaction — it uses the original Bitcoin format from 2009, without the SegWit discount.`
+        );
+    }
+
+    if (isRBF) {
+        storyParas.push(
+            `<span class="tip" data-tip="Replace-By-Fee (RBF): the sender can broadcast a new version of this transaction with a higher fee to get it confirmed faster, as long as it hasn't been included in a block yet.">RBF signaling</span> is active — this transaction can be replaced with a higher-fee version before it confirms.`
+        );
+    }
+
+    if (hasLock) {
+        const lt = tx.locktime_type === 'block_height' ? `block ${tx.locktime_value}` : `Unix timestamp ${tx.locktime_value}`;
+        storyParas.push(
+            `This transaction has a <strong>timelock</strong> — it cannot be confirmed until ${lt}. This is a way to schedule a payment for the future.`
+        );
+    }
+
+    const hasBadges = [
+        isSegwit   ? `<span class="badge b-white">SegWit</span>` : `<span class="badge b-outline">Legacy</span>`,
+        isRBF      ? `<span class="badge b-warn">Replaceable (RBF)</span>` : '',
+        hasLock    ? `<span class="badge b-outline">${tx.locktime_type.replace('_',' ')}</span>` : '',
+        warn.length? `<span class="badge b-danger">${warn.length} Warning${warn.length>1?'s':''}</span>` : '',
+    ].filter(Boolean).join('');
+
+    wrap.insertAdjacentHTML('beforeend', `
+        <div class="card">
+            <div class="card-head"><span class="card-title">What happened?</span></div>
+            <div class="story-body">
+                <div class="story-lead">${storyLead}</div>
+                ${storyParas.map(p=>`<p class="story-para">${p}</p>`).join('')}
+                <div class="badges">${hasBadges}</div>
+            </div>
+        </div>`);
+
+    /* ── 2. Value Flow ── */
+    const feeStr  = fmt(tx.fee_sats) + ' sat';
+    const outPct  = tx.total_input_sats > 0 ? (tx.total_output_sats / tx.total_input_sats * 100) : 100;
+    const feePct  = 100 - outPct;
+
+    wrap.insertAdjacentHTML('beforeend', `
+        <div class="card">
+            <div class="card-head"><span class="card-title">Value flow — who paid whom?</span></div>
+            <div class="card-body">
+                <div class="flow-wrap">${buildSVG(tx)}</div>
+
+                <div class="fee-bar-wrap">
+                    <div class="fee-bar-label">
+                        Where did the money go?
+                        <span style="color:var(--text-3);font-size:11px;">
+                          (total in: ${btc(tx.total_input_sats)} BTC)
+                        </span>
+                    </div>
+                    <div class="fee-bar">
+                        <div class="fee-bar-out" style="flex:${outPct};">
+                            Recipients — ${btc(tx.total_output_sats)} BTC
+                        </div>
+                        ${feePct > 0.3 ? `<div class="fee-bar-fee" style="flex:${feePct};">
+                            Miner fee — ${feeStr}
+                        </div>` : ''}
+                    </div>
+                </div>
+            </div>
+        </div>`);
+
+    /* ── 3. Fees & Size ── */
+    wrap.insertAdjacentHTML('beforeend', card('What did it cost?', `
+        <div class="kv-grid">
+            ${kv('Fee', fmt(tx.fee_sats) + ' sat',
+                'The total fee paid to the miner who included this transaction in a block. Inputs − Outputs.')}
+            ${kv('Fee Rate',
+                `<span class="tip" data-tip="Satoshis per virtual byte. Miners prioritise higher fee-rate transactions.">${tx.fee_rate_sat_vb?.toFixed(2)} sat/vB</span>`)}
+            ${kv('Size', tx.size_bytes + ' bytes',
+                'The raw byte length of the serialised transaction.')}
+            ${kv('Virtual Bytes',
+                `<span class="tip" data-tip="vBytes (virtual bytes) account for the SegWit discount. weight ÷ 4, rounded up. Fees are calculated on vBytes, not raw bytes.">${tx.vbytes} vB</span>`)}
+            ${kv('Weight',
+                `<span class="tip" data-tip="Weight Units (WU). Non-witness bytes count ×4, witness bytes count ×1. A block can hold at most 4,000,000 WU.">${tx.weight} WU</span>`)}
+            ${kv('Total In',  btc(tx.total_input_sats)  + ' BTC')}
+            ${kv('Total Out', btc(tx.total_output_sats) + ' BTC')}
+        </div>
+        ${isSegwit && tx.segwit_savings ? (() => {
+            const s = tx.segwit_savings;
+            const pct = (s.weight_actual / s.weight_if_legacy * 100).toFixed(1);
+            return `<div style="margin-top:16px;">
+                <div style="font-size:11px;color:var(--text-3);margin-bottom:6px;">
+                    SegWit discount — actual weight vs hypothetical legacy weight
+                </div>
+                <div class="fee-bar" style="height:28px;">
+                    <div class="fee-bar-out" style="flex:${pct};">
+                        Actual — ${s.weight_actual} WU
+                    </div>
+                    <div style="flex:${100-parseFloat(pct)};background:var(--bg-2);
+                        border-left:1px solid var(--border-hi);display:flex;
+                        align-items:center;padding:0 8px;font-size:10px;
+                        color:var(--text-3);white-space:nowrap;">
+                        Saved — ${s.weight_if_legacy - s.weight_actual} WU (${s.savings_pct?.toFixed(1)}%)
+                    </div>
+                </div>
+            </div>`;
+        })() : ''}
+    `));
+
+    /* ── 4. Inputs ── */
+    wrap.insertAdjacentHTML('beforeend', card(
+        `Inputs <span style="color:var(--text-3);font-weight:400;">(${vin.length})</span>`,
+        `<p class="story-para" style="margin-bottom:14px;">
+            An <span class="tip" data-tip="An input references a previous transaction output that the sender controls. The total value of all inputs must cover the outputs plus the miner fee.">input</span>
+            is a previous Bitcoin balance being spent. The sender proves ownership with a cryptographic signature.
+        </p>
+        <table class="io-table">
+            <thead><tr>
+                <th>#</th>
+                <th>Spend type</th>
+                <th>From address</th>
+                <th>Value</th>
+                <th>Sequence / Lock</th>
+            </tr></thead>
+            <tbody>
+            ${vin.map((inp,i) => {
+                const rtl = inp.relative_timelock;
+                const lockStr = !rtl?.enabled
+                    ? `<span style="color:var(--text-3);font-size:11px;">none</span>`
+                    : `<span style="font-size:11px;">${rtl.value} ${rtl.type}</span>`;
+                return `<tr>
+                    <td style="color:var(--text-3);">${i}</td>
+                    <td>${typePill(inp.script_type)}</td>
+                    <td><span class="mono-s">${inp.address
+                        ? x(inp.address.length>22 ? inp.address.slice(0,20)+'…' : inp.address)
+                        : '<span style="color:var(--text-3);">—</span>'}</span></td>
+                    <td class="sats">${fmt(inp.prevout?.value_sats)} sat</td>
+                    <td>${lockStr}</td>
+                </tr>`;
+            }).join('')}
+            </tbody>
+        </table>
+        <div style="margin-top:14px;">
+            <div class="tech-toggle" onclick="tog('inpTech','inpArr')">
+                <span class="tech-arr" id="inpArr">▶</span>
+                <span class="tech-lbl">Show technical input details (script_sig, witness, ASM…)</span>
+            </div>
+            <div class="tech-body" id="inpTech">
+                ${vin.map((inp,i) => `
+                    <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+                        <div style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:8px;">Input #${i}</div>
+                        <div class="kv-grid" style="margin-bottom:8px;">
+                            ${kv('TXID', `<span class="mono-s">${x(inp.txid)}</span>`)}
+                            ${kv('Vout', inp.vout)}
+                            ${kv('Sequence', '0x'+(inp.sequence>>>0).toString(16).padStart(8,'0'))}
+                        </div>
+                        <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin-bottom:4px;">Script Sig</div>
+                        <div class="hex-val">${inp.script_sig_hex || '(empty)'}</div>
+                        <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin:8px 0 4px;">Script ASM</div>
+                        <div class="hex-val">${x(inp.script_asm || '(empty)')}</div>
+                        ${inp.witness && inp.witness.length ? `
+                            <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin:8px 0 4px;">Witness stack</div>
+                            ${inp.witness.map((w,wi)=>`<div class="hex-val" style="margin-top:4px;">[${wi}] ${w||'(empty)'}</div>`).join('')}
+                        ` : ''}
+                        ${inp.witness_script_asm ? `
+                            <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin:8px 0 4px;">Witness Script ASM</div>
+                            <div class="hex-val">${x(inp.witness_script_asm)}</div>
+                        ` : ''}
+                    </div>`).join('')}
+            </div>
+        </div>`
+    ));
+
+    /* ── 5. Outputs ── */
+    wrap.insertAdjacentHTML('beforeend', card(
+        `Outputs <span style="color:var(--text-3);font-weight:400;">(${vout.length})</span>`,
+        `<p class="story-para" style="margin-bottom:14px;">
+            An <span class="tip" data-tip="An output creates a new spendable balance locked to a recipient's address. The recipient can spend it in a future transaction.">output</span>
+            is a new Bitcoin balance assigned to a recipient. It stays unspent until the recipient uses it.
+        </p>
+        <table class="io-table">
+            <thead><tr>
+                <th>#</th>
+                <th>Type</th>
+                <th>Recipient</th>
+                <th>Value</th>
+            </tr></thead>
+            <tbody>
+            ${vout.map(o => {
+                const isOR = o.script_type === 'op_return';
+                const recip = isOR
+                    ? `<span class="tip" data-tip="OP_RETURN outputs embed arbitrary data in the blockchain. They are unspendable and carry no monetary value — often used for timestamps or protocol messages.">Data carrier</span>
+                       ${o.op_return_data_utf8 ? `<span class="mono-s" style="margin-left:6px;">"${x(o.op_return_data_utf8.substring(0,30))}${o.op_return_data_utf8.length>30?'…':''}"</span>` : ''}`
+                    : `<span class="mono-s">${o.address
+                        ? x(o.address.length>28 ? o.address.slice(0,26)+'…' : o.address)
+                        : '—'}</span>`;
+                return `<tr>
+                    <td style="color:var(--text-3);">${o.n}</td>
+                    <td>${typePill(o.script_type)}</td>
+                    <td>${recip}</td>
+                    <td class="sats">${isOR ? '—' : fmt(o.value_sats)+' sat'}</td>
+                </tr>`;
+            }).join('')}
+            </tbody>
+        </table>
+        <div style="margin-top:14px;">
+            <div class="tech-toggle" onclick="tog('outTech','outArr')">
+                <span class="tech-arr" id="outArr">▶</span>
+                <span class="tech-lbl">Show technical output details (scriptPubKey, ASM, OP_RETURN hex…)</span>
+            </div>
+            <div class="tech-body" id="outTech">
+                ${vout.map((o,i) => `
+                    <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+                        <div style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:8px;">Output #${i}</div>
+                        <div class="kv-grid" style="margin-bottom:8px;">
+                            ${kv('Value', fmt(o.value_sats)+' sat')}
+                            ${kv('Script type', o.script_type)}
+                        </div>
+                        <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin-bottom:4px;">scriptPubKey hex</div>
+                        <div class="hex-val">${o.script_pubkey_hex}</div>
+                        <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin:8px 0 4px;">Script ASM</div>
+                        <div class="hex-val">${x(o.script_asm||'(empty)')}</div>
+                        ${o.script_type==='op_return' ? `
+                            <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin:8px 0 4px;">OP_RETURN data hex</div>
+                            <div class="hex-val">${o.op_return_data_hex||''}</div>
+                            <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin:8px 0 4px;">Protocol</div>
+                            <div class="hex-val">${o.op_return_protocol||'unknown'}</div>
+                        ` : ''}
+                    </div>`).join('')}
+            </div>
+        </div>`
+    ));
+
+    /* ── 6. Warnings ── */
+    if (warn.length > 0) {
+        const wmap = {
+            HIGH_FEE: ['This transaction has an unusually high fee',
+                'fee_sats > 1,000,000 or fee_rate > 200 sat/vB'],
+            DUST_OUTPUT: ['A recipient would receive a "dust" amount',
+                'At least one output is below 546 satoshis — most nodes won\'t relay it'],
+            UNKNOWN_OUTPUT_SCRIPT: ['One or more outputs use an unknown script type',
+                'The script format was not recognised — could be an unusual or custom script'],
+            RBF_SIGNALING: ['This transaction can be replaced before confirmation',
+                'At least one input has nSequence < 0xFFFFFFFE (BIP125 RBF signaling)'],
+        };
+        wrap.insertAdjacentHTML('beforeend', card('Is anything risky? — Warnings', `
+            <div class="warn-list">
+            ${warn.map(w => {
+                const [plain, tech] = wmap[w.code] || [w.code, ''];
+                return `<div class="warn-item">
+                    <div class="warn-dot"></div>
+                    <div>
+                        <div class="warn-code">${x(w.code)}</div>
+                        <div class="warn-plain">${plain}</div>
+                        <div class="warn-tech">${tech}</div>
+                    </div>
+                </div>`;
+            }).join('')}
+            </div>`
+        ));
+    }
+
+    /* ── 7. Raw JSON ── */
+    wrap.insertAdjacentHTML('beforeend', `
+        <div class="card">
+            <div class="card-head"><span class="card-title">Full JSON response</span></div>
+            <div class="card-body">
+                <div class="tech-toggle" onclick="tog('rawJson','rawArr')">
+                    <span class="tech-arr" id="rawArr">▶</span>
+                    <span class="tech-lbl">Show raw JSON (all fields)</span>
+                </div>
+                <div class="tech-body" id="rawJson">
+                    <div class="json-pre" style="margin-top:14px;">
+                        <pre>${x(JSON.stringify(tx,null,2))}</pre>
+                    </div>
+                </div>
+            </div>
+        </div>`);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   RENDER BLOCKS
+══════════════════════════════════════════════════════════════ */
+function renderBlocks(panel, blocks) {
+    panel.innerHTML = '';
+    const wrap = el('div','result');
+    panel.appendChild(wrap);
+
+    blocks.forEach((block, bi) => {
+        if (!block.ok) {
+            wrap.insertAdjacentHTML('beforeend', `
+                <div class="err-box">
+                    <div class="err-code">${x(block.error?.code||'BLOCK_ERROR')}</div>
+                    <div class="err-msg">${x(block.error?.message||'Block parsing failed')}</div>
+                    ${block.block_header ? `<div class="mono-s" style="margin-top:8px;">${x(block.block_header.block_hash)}</div>` : ''}
+                </div>`);
+            return;
+        }
+
+        const h   = block.block_header;
+        const s   = block.block_stats;
+        const txs = block.transactions || [];
+
+        /* Story for the block */
+        wrap.insertAdjacentHTML('beforeend', `
+            <div class="card">
+                <div class="card-head"><span class="card-title">Block overview</span></div>
+                <div class="story-body">
+                    <div class="story-lead">
+                        Block #${block.coinbase?.bip34_height ?? '?'} — ${txs.length} transactions confirmed together.
+                    </div>
+                    <p class="story-para">
+                        Miners collected <strong>${btc(s.total_fees_sats)} BTC</strong> in fees
+                        at an average rate of <strong>${s.avg_fee_rate_sat_vb?.toFixed(2)} sat/vB</strong>.
+                        Total block weight: <strong>${s.total_weight?.toLocaleString()} WU</strong>.
+                    </p>
+                    <p class="story-para">Merkle root: <strong>${h.merkle_root_valid ? '✓ Valid' : '✗ Invalid'}</strong></p>
+                    <div class="kv-grid" style="margin-top:14px;">
+                        ${kv('Block hash',`<span class="mono-s">${x(h.block_hash.slice(0,20)+'…')}</span>`)}
+                        ${kv('Timestamp', new Date(h.timestamp*1000).toUTCString())}
+                        ${kv('Version', '0x'+(h.version>>>0).toString(16))}
+                        ${kv('Bits', h.bits)}
+                        ${kv('Nonce', h.nonce)}
+                        ${kv('Total fees', btc(s.total_fees_sats)+' BTC')}
+                    </div>
+                    ${Object.keys(s.script_type_summary||{}).length ? `
+                        <div style="margin-top:14px;">
+                            <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin-bottom:8px;">Output script types</div>
+                            <div class="badges">
+                                ${Object.entries(s.script_type_summary).map(([t,n])=>
+                                    `<span class="badge b-outline">${x(t.toUpperCase())} <span style="opacity:.5;">${n}</span></span>`
+                                ).join('')}
+                            </div>
+                        </div>` : ''}
+                </div>
+            </div>`);
+
+        /* Coinbase */
+        if (block.coinbase) {
+            wrap.insertAdjacentHTML('beforeend', card('Coinbase transaction (miner reward)', `
+                <p class="story-para" style="margin-bottom:12px;">
+                    The first transaction in every block is the <strong>coinbase</strong>.
+                    It has no inputs — it creates new bitcoins from thin air as the miner's reward,
+                    plus collects all the fees from the block's transactions.
+                </p>
+                <div class="kv-grid">
+                    ${kv('Block height', block.coinbase.bip34_height)}
+                    ${kv('Miner revenue', btc(block.coinbase.total_output_sats)+' BTC')}
+                </div>
+                <div style="margin-top:12px;">
+                    <div class="tech-toggle" onclick="tog('cbTech','cbArr')">
+                        <span class="tech-arr" id="cbArr">▶</span>
+                        <span class="tech-lbl">Show coinbase script hex</span>
+                    </div>
+                    <div class="tech-body" id="cbTech">
+                        <div class="hex-val" style="margin-top:10px;">${block.coinbase.coinbase_script_hex}</div>
+                    </div>
+                </div>`
+            ));
+        }
+
+        /* TX list */
+        wrap.insertAdjacentHTML('beforeend', `
+            <div class="card">
+                <div class="card-head">
+                    <span class="card-title">All transactions (${txs.length})</span>
+                    <span style="font-size:11px;color:var(--text-3);">Click to expand</span>
+                </div>
+                <div class="tx-list">
+                    ${txs.map((tx,i) => blockTxRow(tx,i,bi)).join('')}
+                </div>
+            </div>`);
+    });
+}
+
+function blockTxRow(tx, i, bi) {
+    const id    = `btx-${bi}-${i}`;
+    const short = tx.txid ? tx.txid.slice(0,28)+'…' : '(no txid)';
+    const fee   = tx.fee_sats != null ? fmt(tx.fee_sats)+' sat' : '—';
+    const label = i===0 ? 'Coinbase' : `TX #${i}`;
+    return `
+        <div class="tx-row">
+            <div class="tx-sum" onclick="togTx('${id}')">
+                <span class="tx-idx">${i}</span>
+                <span class="tx-txid">${x(short)}</span>
+                <span class="tx-fee-s">${x(fee)}</span>
+                <span class="tx-ch" id="${id}-ch">▶</span>
+            </div>
+            <div class="tx-detail" id="${id}">${inlineTx(tx,i)}</div>
+        </div>`;
+}
+
+function inlineTx(tx, idx) {
+    if (!tx || !tx.ok) return `<div class="err-box" style="margin:0;">
+        <div class="err-code">${x(tx?.error?.code||'TX_ERROR')}</div>
+        <div class="err-msg">${x(tx?.error?.message||'')}</div></div>`;
+
+    const vin  = tx.vin  || [];
+    const vout = tx.vout || [];
+    const isOR = vout.some(o=>o.script_type==='op_return');
+
+    return `
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:10px;word-break:break-all;font-family:var(--mono);">${x(tx.txid||'')}</div>
+        <div class="kv-grid" style="margin-bottom:14px;">
+            ${kv('Fee',    tx.fee_sats!=null?fmt(tx.fee_sats)+' sat':'—')}
+            ${kv('Rate',   tx.fee_rate_sat_vb?.toFixed(2)+' sat/vB')}
+            ${kv('vBytes', tx.vbytes+' vB')}
+            ${kv('Weight', tx.weight+' WU')}
+            ${kv('Inputs', vin.length)}
+            ${kv('Outputs',vout.length)}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div>
+                <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin-bottom:6px;">Inputs</div>
+                ${vin.map((inp,i)=>`
+                    <div style="padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;">
+                        <span style="color:var(--text-3);margin-right:6px;">#${i}</span>
+                        ${typePill(inp.script_type)}
+                        <span class="mono-s" style="display:block;margin-top:3px;">${inp.address?x(inp.address.slice(0,18))+'…':'—'}</span>
+                        <span class="sats" style="font-size:11px;color:var(--text-2);">${fmt(inp.prevout?.value_sats)} sat</span>
+                    </div>`).join('')}
+            </div>
+            <div>
+                <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin-bottom:6px;">Outputs</div>
+                ${vout.map(o=>`
+                    <div style="padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;">
+                        <span style="color:var(--text-3);margin-right:6px;">#${o.n}</span>
+                        ${typePill(o.script_type)}
+                        <span class="mono-s" style="display:block;margin-top:3px;">${o.address?x(o.address.slice(0,18))+'…':'—'}</span>
+                        <span class="sats" style="font-size:11px;color:var(--text-2);">${o.script_type==='op_return'?'data':fmt(o.value_sats)+' sat'}</span>
+                    </div>`).join('')}
+            </div>
+        </div>`;
+}
+
+function togTx(id) {
+    document.getElementById(id).classList.toggle('show');
+    document.getElementById(id+'-ch').classList.toggle('open');
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SVG flow diagram
+══════════════════════════════════════════════════════════════ */
+function buildSVG(tx) {
+    const vin  = tx.vin  || [];
+    const vout = tx.vout || [];
+    const hasFee = tx.fee_sats > 0;
+
+    const NW=200, NH=50, gap=8;
+    const lx=0, rx=270;
+    const svgW = rx + NW;
+    const rN   = vout.length + (hasFee?1:0);
+    const rows = Math.max(vin.length, rN);
+    const svgH = rows * (NH+gap) + gap;
+
+    const cy = (count,i) =>
+        gap + i*(NH+gap) + NH/2 + ((rows-count)*(NH+gap))/2;
+
+    const iYs = vin.map((_,i)=>cy(vin.length,i));
+    const oYs = [
+        ...vout.map((_,i)=>cy(rN,i)),
+        ...(hasFee?[cy(rN,vout.length)]:[])
+    ];
+
+    const e = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const sh = s => s ? (s.length>18?s.slice(0,16)+'…':s) : '';
+
+    let svg = `<svg viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg"
+        style="width:100%;max-height:380px;display:block;">`;
+    svg += `<defs><marker id="ah" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 Z" fill="#2a2a2a"/></marker></defs>`;
+    svg += `<rect width="${svgW}" height="${svgH}" fill="#0d0d0d" rx="4"/>`;
+
+    /* Arrows */
+    iYs.forEach(iy => oYs.forEach(oy => {
+        svg += `<line x1="${lx+NW}" y1="${iy}" x2="${rx}" y2="${oy}"
+            stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#ah)"/>`;
+    }));
+
+    /* Input nodes */
+    vin.forEach((inp,i) => {
+        const y   = iYs[i] - NH/2;
+        const val = btc(inp.prevout?.value_sats??0);
+        const lbl = sh(inp.address || inp.script_type);
+        svg += `<rect x="${lx}" y="${y}" width="${NW}" height="${NH}" rx="4"
+            fill="#111" stroke="#1e1e1e" stroke-width="1"/>`;
+        svg += `<text x="${lx+10}" y="${y+18}" fill="#fff" font-size="12"
+            font-family="'SF Mono','Fira Code',monospace" font-weight="600">${e(val)} BTC</text>`;
+        svg += `<text x="${lx+10}" y="${y+35}" fill="#444" font-size="10"
+            font-family="'SF Mono','Fira Code',monospace">${e(lbl)}</text>`;
+    });
+
+    /* Output nodes */
+    vout.forEach((out,i) => {
+        const y   = oYs[i] - NH/2;
+        const isOR = out.script_type === 'op_return';
+        const val = isOR ? 'OP_RETURN' : btc(out.value_sats);
+        const lbl = sh(out.address || out.script_type);
+        svg += `<rect x="${rx}" y="${y}" width="${NW}" height="${NH}" rx="4"
+            fill="#111" stroke="${isOR?'#1e1e1e':'#222'}" stroke-width="1"/>`;
+        svg += `<text x="${rx+10}" y="${y+18}" fill="${isOR?'#444':'#fff'}" font-size="12"
+            font-family="'SF Mono','Fira Code',monospace" font-weight="600">${e(val)}${isOR?'':' BTC'}</text>`;
+        svg += `<text x="${rx+10}" y="${y+35}" fill="#444" font-size="10"
+            font-family="'SF Mono','Fira Code',monospace">${e(lbl)}</text>`;
+    });
+
+    /* Fee node */
+    if (hasFee) {
+        const y = oYs[oYs.length-1] - NH/2;
+        svg += `<rect x="${rx}" y="${y}" width="${NW}" height="${NH}" rx="4"
+            fill="#110a0a" stroke="#2a1515" stroke-width="1"/>`;
+        svg += `<text x="${rx+10}" y="${y+18}" fill="#ff5252" font-size="12"
+            font-family="'SF Mono','Fira Code',monospace" font-weight="600">${e(btc(tx.fee_sats))} BTC</text>`;
+        svg += `<text x="${rx+10}" y="${y+35}" fill="#442222" font-size="10"
+            font-family="'SF Mono','Fira Code',monospace">miner fee ↑</text>`;
+    }
+
+    svg += '</svg>';
+    return svg;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Helpers
+══════════════════════════════════════════════════════════════ */
+function el(tag,cls) {
+    const d = document.createElement(tag);
+    if (cls) d.className = cls;
+    return d;
+}
+
+function card(title, body) {
+    return `<div class="card">
+        <div class="card-head"><span class="card-title">${title}</span></div>
+        <div class="card-body">${body}</div>
+    </div>`;
+}
+
+function kv(key, val, tip) {
+    const inner = tip
+        ? `<span class="tip" data-tip="${x(tip)}">${val}</span>`
+        : val;
+    return `<div class="kv"><div class="kv-k">${key}</div><div class="kv-v">${inner}</div></div>`;
+}
+
+/* Script type → human-readable pill */
+const SCRIPT_NAMES = {
+    'p2pkh':           'P2PKH',
+    'p2sh':            'P2SH',
+    'p2wpkh':          'P2WPKH',
+    'p2wsh':           'P2WSH',
+    'p2tr':            'P2TR · Taproot',
+    'op_return':       'OP_RETURN',
+    'p2sh-p2wpkh':     'P2SH-P2WPKH',
+    'p2sh-p2wsh':      'P2SH-P2WSH',
+    'p2tr_keypath':    'P2TR · key path',
+    'p2tr_scriptpath': 'P2TR · script path',
+    'unknown':         'unknown',
+};
+const SCRIPT_TIPS = {
+    'p2pkh':           'Pay-to-Public-Key-Hash — the original Bitcoin address format (starts with 1)',
+    'p2sh':            'Pay-to-Script-Hash — a flexible address that can encode complex spending conditions (starts with 3)',
+    'p2wpkh':          'Pay-to-Witness-Public-Key-Hash — native SegWit single-key address (starts with bc1q)',
+    'p2wsh':           'Pay-to-Witness-Script-Hash — native SegWit address for complex scripts like multisig',
+    'p2tr':            'Pay-to-Taproot — the latest Bitcoin address type; most efficient and private (starts with bc1p)',
+    'op_return':       'OP_RETURN outputs store arbitrary data in the blockchain. They carry no spendable value.',
+    'p2sh-p2wpkh':     'Nested SegWit — a SegWit address wrapped inside a P2SH envelope for backward compatibility',
+    'p2sh-p2wsh':      'Nested SegWit script — a SegWit script address wrapped in P2SH for backward compatibility',
+    'p2tr_keypath':    'Taproot key-path spend — the most efficient Taproot spend; the signature looks like any other key spend',
+    'p2tr_scriptpath': 'Taproot script-path spend — reveals and executes a hidden Bitcoin Script leaf',
+    'unknown':         'The script format was not recognised as any standard type',
+};
+
+function typePill(t) {
+    const name = SCRIPT_NAMES[t] || t;
+    const tip  = SCRIPT_TIPS[t]  || '';
+    return `<span class="type-pill tip" data-tip="${x(tip)}">${x(name)}</span>`;
+}
+
+function tog(contentId, arrowId) {
+    document.getElementById(contentId).classList.toggle('show');
+    document.getElementById(arrowId).classList.toggle('open');
+}
+
+function x(s) {
+    return String(s??'')
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmt(n) { return n!=null ? Number(n).toLocaleString() : '—'; }
+function btc(sats) { return ((sats??0)/1e8).toFixed(8).replace(/\.?0+$/,'').padEnd(2,'0'); }
+</script>
+</body>
+</html>
